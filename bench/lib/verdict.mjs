@@ -20,6 +20,25 @@ export function verdictOf(medianMs, mode) {
   return medianMs <= limitMs * MARGINAL_FACTOR ? "MARGINAL" : "FAIL";
 }
 
+/**
+ * 通道级可用性推导（共享件：verify 与 report 必须同一实现，杜绝两处口径漂移）。
+ * 凭 runner 可用性失败行（phase=install, exit≠0, textid=null, channel 非空）判定，带时序撤销：
+ * append-only 日志下取每通道最后一个状态行，失败行之后出现 synth 行即视为已恢复、不再豁免；
+ * 资产落地的 install 行（channel=null）属 setup 面，不参与通道判定。
+ * @param {Array} log raw-log 全部行
+ * @returns {Set<string>} 不可用通道键（engine|channel）集合
+ */
+export function deriveUnavailable(log) {
+  const lastState = new Map();
+  for (const l of log) {
+    if (l.channel == null) continue;
+    const key = `${l.engine}|${l.channel}`;
+    if (l.phase === "install" && l.exit !== 0 && l.textid == null) lastState.set(key, "fail");
+    else if (l.phase === "synth") lastState.set(key, "synth");
+  }
+  return new Set([...lastState].filter(([, s]) => s === "fail").map(([k]) => k));
+}
+
 /** 按 (engine, channel, textid, mode) 聚合 synth 成功行 → 中位数格 */
 export function aggregateCells(synthRows) {
   const by = new Map();

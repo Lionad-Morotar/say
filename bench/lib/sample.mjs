@@ -2,7 +2,7 @@
 // 44 字节空 wav 判通过的失败模式由此封堵：数据字节从 RIFF data 块精确解析，不信任文件存在性。
 import { readFileSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
-import { MIN_SAMPLE_DATA_BYTES, MIN_SAMPLE_DURATION_S, SAMPLES, SAMPLE_RATE } from "./config.mjs";
+import { MIN_SAMPLE_DATA_BYTES, MIN_SAMPLE_DURATION_S, SAMPLES, SAMPLE_RATE, TEXT_IDS } from "./config.mjs";
 import { runCmd } from "./exec.mjs";
 
 /** 原始输出 → 试听样本（22050Hz 16bit 单声道）：verify 与独立抽查的统一口径 */
@@ -54,4 +54,18 @@ export async function checkSample(file) {
   else if (durationS <= MIN_SAMPLE_DURATION_S) reasons.push(`时长 ${durationS}s ≤ ${MIN_SAMPLE_DURATION_S}s`);
   if (reasons.length === 0 && fileSize < MIN_SAMPLE_DATA_BYTES) reasons.push(`文件大小 ${fileSize}B 异常`);
   return { ok: reasons.length === 0, dataBytes, durationS, reasons };
+}
+
+/**
+ * 每文本的 system-say 对照基线时长（退化判定分母；verify 与 report 共用的共享件）。
+ * 对照样本缺失时对应值为 null，退化检查自然跳过——say 自身样本缺失已被绝对下限判罚，
+ * 不存在「毁基线放行退化」的逃逸面。
+ * @returns {Promise<Map<string, number|null>>}
+ */
+export async function sayBaselines() {
+  const m = new Map();
+  for (const textid of TEXT_IDS) {
+    m.set(textid, await afinfoDurationS(path.join(SAMPLES, `system-say-spawn-${textid}.wav`)));
+  }
+  return m;
 }

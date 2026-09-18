@@ -9,8 +9,8 @@ import { ALL_CHANNELS, EXPECTED_CHANNELS } from "./channels.mjs";
 import { DEGENERATE_RATIO, MIN_SAMPLE_DATA_BYTES, REPORT, RUNS, SAMPLES, TEXT_IDS } from "./config.mjs";
 import { runCmd } from "./exec.mjs";
 import { readLog } from "./log.mjs";
-import { afinfoDurationS, checkSample } from "./sample.mjs";
-import { aggregateCells } from "./verdict.mjs";
+import { afinfoDurationS, checkSample, sayBaselines } from "./sample.mjs";
+import { aggregateCells, deriveUnavailable } from "./verdict.mjs";
 
 /**
  * @typedef {{name: string, status: "PASS"|"FAIL", detail: string}} Check
@@ -35,17 +35,8 @@ export async function verify() {
   const log = readLog();
   const synth = log.filter((l) => l.phase === "synth");
 
-  // 通道级 N/A 凭 runner 可用性失败行（phase=install, exit≠0, textid=null, channel 非空）判定，
-  // 并带时序撤销：append-only 日志下取每通道最后一个状态行，失败行之后出现 synth 行即视为已恢复、不再豁免——
-  // 否则历史一次失败会永久放行该通道后续缺口；资产落地的 install 行（channel=null）属 setup 面，不参与通道判定
-  const lastState = new Map();
-  log.forEach((l) => {
-    if (l.channel == null) return;
-    const key = `${l.engine}|${l.channel}`;
-    if (l.phase === "install" && l.exit !== 0 && l.textid == null) lastState.set(key, "fail");
-    else if (l.phase === "synth") lastState.set(key, "synth");
-  });
-  const unavailable = new Set([...lastState].filter(([, s]) => s === "fail").map(([k]) => k));
+  // 通道级 N/A：时序撤销语义与判据见 deriveUnavailable 共享件（report 生成同源）
+  const unavailable = deriveUnavailable(log);
   const registered = new Set(ALL_CHANNELS.map((c) => `${c.engine}|${c.channel}`));
 
   // 格子级 N/A：report bench-cells 块的 na_cells 声明（如单语言模型对外语文本产出退化空音频），
@@ -80,12 +71,8 @@ export async function verify() {
     detail: c1Fail.length === 0 ? `全部应测格 ≥${RUNS} 次成功合成（N/A 通道 ${unavailable.size} 个、N/A 格 ${naCells.size} 个豁免）` : `缺口 ${c1Fail.length} 格: ${c1Fail.slice(0, 12).join("; ")}${c1Fail.length > 12 ? " …" : ""}`,
   });
 
-  // say 对照基线：退化判定的分母（对照通道必然在跑；基线缺失时退化检查自然跳过，
-  // 而 say 自身样本缺失已被 C2 绝对下限判罚，不存在「毁基线放行退化」的逃逸面）
-  const sayBaseline = new Map();
-  for (const textid of TEXT_IDS) {
-    sayBaseline.set(textid, await afinfoDurationS(path.join(SAMPLES, `system-say-spawn-${textid}.wav`)));
-  }
+  // say 对照基线：退化判定的分母（缺失值语义见 sayBaselines 共享件）
+  const sayBaseline = await sayBaselines();
 
   // C2 样本有效性：数据字节 ≥22050 且 afinfo 时长 >0.5s——44B 空 wav 必须 FAIL；
   // 绝对下限之上叠加退化判定——时长 < say 对照 25% 的「非 N/A 格」必须 FAIL（退化却不声明 = 拿噪声冒充可用语音）
