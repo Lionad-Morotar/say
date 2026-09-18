@@ -99,6 +99,17 @@ test("checkMeta 校验八字段齐全", () => {
   assert.equal(checkMeta(null).ok, false);
 });
 
+test("checkMeta 的 afinfo 空对象不放行（Promise 展开事故回归）", () => {
+  const meta = {
+    character: "dva", source_urls: ["u"], language: "en", dub: "d",
+    license_note: "n", processing: "raw", collected_at: "t",
+    afinfo: {},
+  };
+  const r = checkMeta(meta);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.missing, ["afinfo.durationS", "afinfo.sampleRateHz", "afinfo.channels"]);
+});
+
 test("checkBundle 幂等判据：三件套齐且达标才 complete", () => {
   const good = {
     refExists: true,
@@ -125,7 +136,7 @@ test("checkBundle 全达标 → complete 且 reasons 空", () => {
     dub: "en-US",
     license_note: "n",
     processing: "raw",
-    afinfo: {},
+    afinfo: { durationS: 15.5, sampleRateHz: 44100, channels: 1 },
     collected_at: "t",
   });
   const r = checkBundle({

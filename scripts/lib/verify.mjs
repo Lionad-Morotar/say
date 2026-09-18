@@ -46,10 +46,15 @@ export function checkRefSpec({ channels, sampleRateHz, durationS, maxVolumeDb })
   return { ok: reasons.length === 0, reasons };
 }
 
-/** meta.json 字段齐全性（八字段契约见任务书） */
+/** meta.json 字段齐全性（八字段契约见任务书）；afinfo 子字段（时长/采样率/声道）同样必填 */
 export function checkMeta(meta) {
   if (meta == null || typeof meta !== "object") return { ok: false, missing: [...META_REQUIRED] };
   const missing = META_REQUIRED.filter((k) => meta[k] == null);
+  if (meta.afinfo != null && typeof meta.afinfo === "object") {
+    for (const sub of ["durationS", "sampleRateHz", "channels"]) {
+      if (meta.afinfo[sub] == null) missing.push(`afinfo.${sub}`);
+    }
+  }
   return { ok: missing.length === 0, missing };
 }
 
