@@ -18,7 +18,7 @@ export async function runBench({ channels, only }) {
   mkdirSync(SAMPLES, { recursive: true });
   const results = [];
   for (const ch of channels) {
-    if (only && !only.includes(ch.engine)) continue;
+    if (only && !only.some((o) => o === ch.engine || o === `${ch.engine}:${ch.channel}`)) continue;
     const av = await ch.available();
     if (!av.ok) {
       // 通道级 N/A：install 相失败行留证，本通道全部合成豁免

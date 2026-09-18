@@ -5,12 +5,10 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { KOKORO_DIR, MATCHA_DIR, SHERPA_BIN, VOCOS_22K, VOCOS_24K, ZIPVOICE_DIR } from "../assets.mjs";
 import { runCmd } from "../exec.mjs";
+import { ZIPVOICE_NUM_STEPS, ZIPVOICE_REFERENCE_AUDIO, ZIPVOICE_REFERENCE_TEXT } from "./sherpa-specs.mjs";
 
 const NUM_THREADS = "--num-threads=2";
 const TIMEOUT_MS = 5 * 60 * 1000;
-
-// zipvoice 官方包自带参考音频转写（test_wavs/prompt.txt 的 leijun-1.wav 行），原样采用保证参考文本与音频一致
-const ZIPVOICE_REFERENCE_TEXT = "那还是36年前, 1987年. 我呢考上了武汉大学的计算机系.";
 
 /**
  * @param {object} spec
@@ -113,7 +111,7 @@ export const zipvoiceSpawn = spawnAdapter({
     path.join(ZIPVOICE_DIR, "lexicon.txt"),
     path.join(ZIPVOICE_DIR, "tokens.txt"),
     VOCOS_24K,
-    path.join(ZIPVOICE_DIR, "test_wavs", "leijun-1.wav"),
+    ZIPVOICE_REFERENCE_AUDIO,
   ],
   args: [
     `--zipvoice-encoder=${path.join(ZIPVOICE_DIR, "encoder.int8.onnx")}`,
@@ -122,9 +120,8 @@ export const zipvoiceSpawn = spawnAdapter({
     `--zipvoice-lexicon=${path.join(ZIPVOICE_DIR, "lexicon.txt")}`,
     `--zipvoice-tokens=${path.join(ZIPVOICE_DIR, "tokens.txt")}`,
     `--zipvoice-vocoder=${VOCOS_24K}`,
-    `--reference-audio=${path.join(ZIPVOICE_DIR, "test_wavs", "leijun-1.wav")}`,
+    `--reference-audio=${ZIPVOICE_REFERENCE_AUDIO}`,
     `--reference-text=${ZIPVOICE_REFERENCE_TEXT}`,
-    // distill 版权重按官方示例用 4 步流匹配（默认 5 步面向非 distill）
-    "--num-steps=4",
+    `--num-steps=${ZIPVOICE_NUM_STEPS}`,
   ],
 });

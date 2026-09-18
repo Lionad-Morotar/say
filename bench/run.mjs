@@ -18,10 +18,12 @@ function failOnly(msg) {
 
 function parseOnly(raw) {
   const list = raw.split(",").filter(Boolean);
-  const known = new Set(ALL_CHANNELS.map((c) => c.engine));
+  // 支持 engine 与 engine:channel 两种粒度：同 engine 双通道（spawn/node）时可单跑其一，
+  // 避免重跑已测通道——append-only 日志下热缓存复跑会产出误标 cold 的稀释数据
+  const known = new Set(ALL_CHANNELS.flatMap((c) => [c.engine, `${c.engine}:${c.channel}`]));
   const unknown = list.filter((e) => !known.has(e));
   if (list.length === 0 || unknown.length > 0) {
-    failOnly(`未知 engine: ${unknown.join(", ") || "(空)"}（已知: ${[...known].join(", ")}）`);
+    failOnly(`未知 engine 或 engine:channel: ${unknown.join(", ") || "(空)"}（已知: ${[...known].join(", ")}）`);
   }
   return list;
 }
