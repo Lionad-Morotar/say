@@ -1,0 +1,7 @@
+{
+  "name": "say",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "好听的 agent 说话体验：macOS say 的神经网络级 TTS 替代（路线调研中）"
+}

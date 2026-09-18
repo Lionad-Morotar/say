@@ -1,0 +1,10 @@
+# nsl 编排状态（flow-polaris 本地状态，不进 git）
+.nsl/
+
+# deps & build
+node_modules/
+dist/
+
+# misc
+.DS_Store
+*.log
