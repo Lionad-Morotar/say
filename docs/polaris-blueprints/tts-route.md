@@ -17,6 +17,16 @@
 * 用户 shell 基建：`~/.local/bin` 已在 PATH 前置区，用户有成熟 PATH shadow 习惯（find→fd / grep→rg / ls→eza 等）
 * 网络前置假设（Gate 发现 7）：模型资产托管在 GitHub Releases（sherpa 系）与 HuggingFace（kokoro/ZipVoice/Qwen3-TTS 系），上海直连两者均不稳定；用户有代理环境（shadow）。下载脚本必须支持代理 env 透传与 HF 镜像（HF_ENDPOINT）fallback，s-deploy 冒烟在实际网络形态下验收并注明所用通道
 
+s-bench 本机实测（2026-09-19，M3，每格 3 次取中位，64 格矩阵，全量见 `docs/research/bench/report.md` 与 raw-log）：
+
+* 系统 say 对照：0.54-0.77s 全 PASS（神经引擎要跨过的体验门槛）
+* sherpa-matcha-zh（node）：zh-short 冷 1.29s / 热 0.41s 最快；但单语中文（英文输出退化噪声记 N/A）、单女声、数据集非商用
+* sherpa-kokoro-int8（node）：en-short 冷 2.57s / 热 1.59s PASS；zh-short 热 4.25s MARGINAL；en-long 热 ~10s FAIL
+* sherpa-zipvoice 占位干音克隆（node）：en/zh 短句热 2.43-2.57s PASS——**克隆嗓进默认延迟预算成立**；en-long FAIL
+* mlx-qwen3（子进程）：en-short 热 2.88s PASS、zh-short 热 3.67s MARGINAL、en-long 热 9.12s FAIL；安装体量 1.9GB
+* 可行性矩阵六格：kokoro/ZipVoice 双通道（Node 绑定 + spawn）4/4 可用；matcha 2/4（英文退化）；ZipVoice Node 绑定支持成立（静态类型 + 动态合成双证据）
+* 长文本（~60 词）全部本地通道热态超标 → v1 处置 = 规范化层分块 + 流水播放（首包 <3s），F2 daemon 已触发但延后（见雾区）
+
 调研关键事实（详表见两份报告）：
 
 * 现成 say 兼容 shim 存在两个：**sag**（steipete，578★，MIT，Go 单二进制，brew tap 可装，say 风格接口 + afplay 流式播放；但后端仅 ElevenLabs/60db 云 API，需 key 按字符计费联网）与 **gensay**（2★，MIT，Python，say 接口复刻最完整 -v/-r/-f/-o/管道，多 provider，本地 chatterbox/vibevoice + 云端，warm daemon 短句 1.4s，LRU 缓存，断网自动回退原生 say；社区验证度≈0，本地 provider 需 ~2GB PyTorch）
@@ -158,7 +168,7 @@ say/
 * D4：默认引擎必须本地离线；云引擎只作显式配置的可选预设（Q4）
 * D5：语气 = 配置预设（音色×语速×引擎），情绪引擎留扩展位（Q2）
 * D6：部署 = PATH shadow `say` 于 ~/.local/bin，退路为独立命令名 + CLAUDE.md 一行（Q3）
-* D7：引擎选型走基准测试裁决制：sherpa-onnx 为工程底座（通用音色 + ZipVoice 克隆同宿主），mlx+Qwen3-TTS 为中文质量挑战者（en-first 后权重下调）；s-bench 裁通用引擎延迟/质量，克隆质量归属裁决在 s-voice（真实素材后，Gate 发现 2）
+* D7：引擎选型走基准测试裁决制：sherpa-onnx 为工程底座（通用音色 + ZipVoice 克隆同宿主），mlx+Qwen3-TTS 为中文质量挑战者（en-first 后权重下调）；s-bench 裁通用引擎延迟/质量，克隆质量归属裁决在 s-voice（真实素材后，Gate 发现 2）。**s-bench 已落地**：工程底座确定 = sherpa-onnx Node 绑定（六格可行性全验证，延迟数据见事实底座）；mlx-qwen3 延迟与 kokoro 同档但体量 1.9GB 且 zh 热态 MARGINAL——挑战者身份保留、不默认接线；默认嗓候选 = zipvoice 克隆嗓（若 s-voice 相似度获用户认可，短句热 2.4-2.6s 在预算内）或 kokoro en 嗓（通用兜底，en-short 热 1.59s 最快）
 * D8：失败回退 /usr/bin/say，出声即 exit 0；并发无锁混叠（Q6）
 * D9：实现栈 Node + 引擎适配器 + 执行器三态接口；sherpa-onnx-node 可行性按模型×通道矩阵由 s-bench 验证，退路 spawn C++ 二进制（Q7，Gate 发现 4）
 * D10：语言策略——说话语言默认英语（用户明确指令），中文同嗓直读、混合短句质量 s-bench 实测；不达标则中文走通用 zh 预设（角色嗓缺席中文流量 = 用户指令下既定取舍）；音色级路由经预设配置具备，不做引擎级自动检测（Q10，Gate 发现 1 修订）
@@ -188,7 +198,7 @@ say/
 ## 遗留与雾区
 
 * F1 系统 Enhanced/Premium 音色：GUI 手动下载（两种入口说法待验），触发条件 = 用户试听基线样本后想对比，或全线失败时的零代码保底
-* F2 守护进程/warm daemon 模式：执行器三态接口已预留（D9），触发只增实现；触发条件 = s-bench 实测冷启动 > 10s 或热调用 > 3s（gensay daemon 与 sherpa 官方 server 建议为设计参照）
+* F2 守护进程/warm daemon 模式：执行器三态接口已预留（D9），触发只增实现。**s-bench 已正式触发条件**（kokoro en-long 冷 11.1s、zipvoice en-long 冷 15.2s 均 >10s；spawn 通道热态全线 >3s）——但 v1 处置为「规范化层分块 + 顺序合成流水播放」：agent 主场景是短句（hot 1.6-2.6s 达标），长文本经分块后首包出声 <3s，体验目标即可达成；daemon 延后至分块流水仍不满足体验时实施（gensay daemon 与 sherpa 官方 server 建议为设计参照），实施时 kokoro/zipvoice 的 spawn 热态超标格全部转 PASS 预期
 * F3 克隆质量升级——GPT-SoVITS 少样本微调：触发条件 = s-voice 三角色 ZipVoice 零样本相似度用户试听不认可（尤其 Frieren 跨语种克隆失败时）；触发即部署形态跃迁（重服务化、训练管线），代价显式告知用户后再动
 * F4 情绪表现力引擎（IndexTTS-2.5 / Qwen3-TTS 情绪面）：触发条件 = 语气预设（D5）被用户判定不够
 * F5 云预设（ElevenLabs 角色克隆 / edge-tts / sag）：触发条件 = 用户明确要求质量天花板且接受联网/付费，作为 config 可选 engine 接入；亦为 D14 降级出口的升级选项之一
