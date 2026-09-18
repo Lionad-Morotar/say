@@ -22,6 +22,13 @@ export const SAMPLE_RATE = 22050;
 export const MIN_SAMPLE_DATA_BYTES = 22050;
 export const MIN_SAMPLE_DURATION_S = 0.5;
 
+/**
+ * 退化音频相对下限：时长 < 同文本 system-say 对照样本的该比例即判退化（非真实语音）。
+ * 绝对下限挡不住「长文本却只出零点几秒噪声」的退化形态（单语模型跑外语文本时 exit 0 输出仍可超字节下限），
+ * 须以同文本对照锚定；系数须在报告口径节声明。
+ */
+export const DEGENERATE_RATIO = 0.25;
+
 /** polaris 验收判据（秒） */
 export const LIMIT_HOT_S = 3;
 export const LIMIT_COLD_S = 10;

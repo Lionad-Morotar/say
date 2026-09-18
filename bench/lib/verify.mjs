@@ -6,10 +6,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { KOKORO_DIR, MATCHA_DIR, MLX_TTS_ENTRY, QWEN3_DIR, SHERPA_BIN, ZIPVOICE_DIR } from "./assets.mjs";
 import { ALL_CHANNELS, EXPECTED_CHANNELS } from "./channels.mjs";
-import { MIN_SAMPLE_DATA_BYTES, REPORT, RUNS, SAMPLES, TEXT_IDS } from "./config.mjs";
+import { DEGENERATE_RATIO, MIN_SAMPLE_DATA_BYTES, REPORT, RUNS, SAMPLES, TEXT_IDS } from "./config.mjs";
 import { runCmd } from "./exec.mjs";
 import { readLog } from "./log.mjs";
-import { checkSample } from "./sample.mjs";
+import { afinfoDurationS, checkSample } from "./sample.mjs";
 import { aggregateCells } from "./verdict.mjs";
 
 /**
@@ -80,7 +80,15 @@ export async function verify() {
     detail: c1Fail.length === 0 ? `全部应测格 ≥${RUNS} 次成功合成（N/A 通道 ${unavailable.size} 个、N/A 格 ${naCells.size} 个豁免）` : `缺口 ${c1Fail.length} 格: ${c1Fail.slice(0, 12).join("; ")}${c1Fail.length > 12 ? " …" : ""}`,
   });
 
-  // C2 样本有效性：数据字节 ≥22050 且 afinfo 时长 >0.5s——44B 空 wav 必须 FAIL
+  // say 对照基线：退化判定的分母（对照通道必然在跑；基线缺失时退化检查自然跳过，
+  // 而 say 自身样本缺失已被 C2 绝对下限判罚，不存在「毁基线放行退化」的逃逸面）
+  const sayBaseline = new Map();
+  for (const textid of TEXT_IDS) {
+    sayBaseline.set(textid, await afinfoDurationS(path.join(SAMPLES, `system-say-spawn-${textid}.wav`)));
+  }
+
+  // C2 样本有效性：数据字节 ≥22050 且 afinfo 时长 >0.5s——44B 空 wav 必须 FAIL；
+  // 绝对下限之上叠加退化判定——时长 < say 对照 25% 的「非 N/A 格」必须 FAIL（退化却不声明 = 拿噪声冒充可用语音）
   const c2Fail = [];
   let c2Checked = 0;
   for (const c of EXPECTED_CHANNELS) {
@@ -91,7 +99,14 @@ export async function verify() {
       const file = path.join(SAMPLES, `${c.engine}-${c.channel}-${textid}.wav`);
       const r = await checkSample(file);
       c2Checked++;
-      if (!r.ok) c2Fail.push(`${path.basename(file)}: ${r.reasons.join("+")}`);
+      if (!r.ok) {
+        c2Fail.push(`${path.basename(file)}: ${r.reasons.join("+")}`);
+        continue;
+      }
+      const base = sayBaseline.get(textid);
+      if (base != null && r.durationS < base * DEGENERATE_RATIO) {
+        c2Fail.push(`${path.basename(file)}: 退化音频 ${r.durationS.toFixed(2)}s < ${DEGENERATE_RATIO}×say对照 ${base.toFixed(2)}s（应声明 N/A）`);
+      }
     }
   }
   checks.push({
@@ -121,7 +136,21 @@ export async function verify() {
       c5Fail.push(`${key}: 声明 N/A 但无任何合成尝试行（未尝试即豁免 = 虚构）`);
       continue;
     }
-    const backed = rows.some((l) => (l.exit !== 0 && (l.stderr_tail ?? "").length > 0) || (l.exit === 0 && (l.out_bytes ?? 0) < MIN_SAMPLE_DATA_BYTES));
+    let backed = rows.some((l) => (l.exit !== 0 && (l.stderr_tail ?? "").length > 0) || (l.exit === 0 && (l.out_bytes ?? 0) < MIN_SAMPLE_DATA_BYTES));
+    if (!backed) {
+      // 字节下限挡不住的退化形态（长文本出零点几秒噪声但体积超下限）：对原始输出做 say 对照时长比判定
+      const base = sayBaseline.get(textid);
+      if (base != null) {
+        for (const l of rows) {
+          if (l.exit !== 0 || !l.out_file || !existsSync(l.out_file)) continue;
+          const d = await afinfoDurationS(l.out_file);
+          if (d != null && d < base * DEGENERATE_RATIO) {
+            backed = true;
+            break;
+          }
+        }
+      }
+    }
     if (!backed) c5Fail.push(`${key}: 声明 N/A 但无失败行或退化输出行佐证`);
   }
   checks.push({
