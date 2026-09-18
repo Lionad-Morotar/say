@@ -7,7 +7,7 @@ import { runCmd } from "../../bench/lib/exec.mjs";
 import { appendVoiceLog } from "./log.mjs";
 import { RAW_LOG, VOICES_DIR, VOICEPACK_DOCS, WORK_DIR, SHERPA_TTS_BIN, ZIPVOICE_DIR, VOCODER_24K } from "./config.mjs";
 import { MANIFEST } from "./manifest.mjs";
-import { assessCharacter, assessSmokeDuration, measureWav, measurePeakDb } from "./verify.mjs";
+import { assessCharacter, assessVariant, assessSmokeDuration, checkRefSpec, measureWav, measurePeakDb } from "./verify.mjs";
 
 /** 冒烟合成文本（平静陈述句，只验真实合成与有效音频，角色相似度归 s-voice 试听终裁） */
 export const SMOKE_TEXT = "Hey, this is a smoke test line for the character voice pack.";
@@ -85,6 +85,12 @@ export function buildMeta({ character, cand, afinfo, peakDb, collectedAt }) {
   };
 }
 
+/** 变体 meta：字段契约与主 meta 一致，唯省 character（嵌套于 meta.variants.<v> 下语境自明） */
+export function buildVariantMeta({ cand, afinfo, peakDb, collectedAt }) {
+  const { character: _omit, ...rest } = buildMeta({ character: null, cand, afinfo, peakDb, collectedAt });
+  return rest;
+}
+
 // —— IO 执行（全部落 raw-log）——
 
 async function logged(phase, engine, cmd, opts = {}) {
@@ -109,8 +115,10 @@ async function logged(phase, engine, cmd, opts = {}) {
 }
 
 /** yt-dlp bestaudio 实际可落盘的扩展名（m4a/opus 在部分 client 组合下出现，漏收会把 exit 0 误判失败） */
-const YT_EXTS = ["webm", "mka", "mp4", "m4a", "opus", "ogg"];
-const findYtFile = (dest) => YT_EXTS.map((e) => `${dest}.${e}`).find((f) => existsSync(f) && statSync(f).size > 1_000_000);
+export const YT_EXTS = ["webm", "mka", "mp4", "m4a", "opus", "ogg"];
+// 大小判据只排除空壳（>0）：40s 级官方短剪辑 bestaudio 仅 ~700KB，
+// 曾按 >1MB 误判「exit 0 却下载失败」级联四连重试；yt-dlp 失败留 .part 不匹配白名单，完整落盘即可信
+export const findYtFile = (dest) => YT_EXTS.map((e) => `${dest}.${e}`).find((f) => existsSync(f) && statSync(f).size > 0);
 
 /**
  * 下载源素材。ytdlp 走 player_client 降级链：本机实测默认 client 对部分视频 403、
@@ -157,11 +165,11 @@ export async function downloadSource(character, cand) {
   throw new Error(`未知候选 kind: ${cand.kind}`);
 }
 
-/** 截取+转制为 ref.wav；分离素材走「粗截→demucs 人声茎→精截」三步，各步落 raw-log */
-export async function processSegment(character, cand, srcFile, voiceDir) {
+/** 截取+转制为 <fileBase>.wav；分离素材走「粗截→demucs 人声茎→精截」三步，各步落 raw-log */
+export async function processSegment(character, cand, srcFile, voiceDir, fileBase = "ref") {
   mkdirSync(voiceDir, { recursive: true });
   const engine = `voicepack-${character}`;
-  const dest = path.join(voiceDir, "ref.wav");
+  const dest = path.join(voiceDir, `${fileBase}.wav`);
   if (!cand.separate) {
     const args = buildCutArgs({ src: srcFile, dest, cut: cand.cut ?? null });
     const r = await logged("process", engine, ["ffmpeg", ...args], { outFile: dest });
@@ -214,9 +222,9 @@ export async function transcribeWithWhisper(character, refWav, voiceDir, transcr
   return text;
 }
 
-/** ref.txt 落盘：正文逐字转写 + 溯源注释（合成时剥离） */
-export function writeRefTxt(voiceDir, text, sourceNote) {
-  writeFileSync(path.join(voiceDir, "ref.txt"), `${text}\n\n# 转写来源: ${sourceNote}\n`, "utf-8");
+/** ref 文本落盘：正文逐字转写 + 溯源注释（合成时剥离） */
+export function writeRefTxt(voiceDir, text, sourceNote, fileBase = "ref") {
+  writeFileSync(path.join(voiceDir, `${fileBase}.txt`), `${text}\n\n# 转写来源: ${sourceNote}\n`, "utf-8");
 }
 
 /** 冒烟合成：复用 s-bench 已验证命令形态；产物落 VOICEPACK_DOCS */
@@ -239,7 +247,87 @@ export async function smokeSynth(character, voiceDir) {
   return ok;
 }
 
-/** 单角色采集：幂等跳过 → 候选序 fail-fast → 达标即冒烟 */
+/** 下载 → 截取/转制/（分离）→ 文本取得（官方台词优先，whisper 兜底）→ <fileBase> 文件落盘 */
+async function acquireRef(character, cand, voiceDir, fileBase) {
+  const ok = await acquireRefInner(character, cand, voiceDir, fileBase);
+  // 半途失败即清理本候选可能落盘的 wav/txt：残留文件与后续候选产物拼成「达标」束
+  // 会被幂等 skip 静默固化（wav 与参考文本来自不同素材），物理层杜绝跨候选混拼
+  if (!ok) {
+    rmSync(path.join(voiceDir, `${fileBase}.wav`), { force: true });
+    rmSync(path.join(voiceDir, `${fileBase}.txt`), { force: true });
+  }
+  return ok;
+}
+
+async function acquireRefInner(character, cand, voiceDir, fileBase) {
+  const src = await downloadSource(character, cand);
+  if (!src) {
+    console.error(`[fail] ${character}/${cand.id}: 下载失败（详见 raw-log）`);
+    return false;
+  }
+  const processed = await processSegment(character, cand, src, voiceDir, fileBase);
+  if (!processed) {
+    console.error(`[fail] ${character}/${cand.id}: 截取转制失败（详见 raw-log）`);
+    return false;
+  }
+  if (cand.text) {
+    writeRefTxt(voiceDir, cand.text, cand.textSource, fileBase);
+  } else if (cand.transcribe) {
+    const text = await transcribeWithWhisper(character, path.join(voiceDir, `${fileBase}.wav`), voiceDir, cand.transcribe);
+    if (!text) {
+      console.error(`[fail] ${character}/${cand.id}: whisper 转写失败（详见 raw-log）`);
+      return false;
+    }
+    writeRefTxt(voiceDir, text, cand.textSource ?? `whisper 转写（openai-whisper 20250625，模型 ${cand.transcribe.model}）`, fileBase);
+  } else {
+    console.error(`[fail] ${character}/${cand.id}: 候选既无官方文本也无转写方案`);
+    return false;
+  }
+  return true;
+}
+
+/** 变体 meta 并回主 meta.json 的 variants 段（主 meta 必已存在——变体生产在主资产达标后执行） */
+function mergeVariantMeta(voiceDir, variant, vmeta) {
+  const metaFile = path.join(voiceDir, "meta.json");
+  const meta = JSON.parse(readFileSync(metaFile, "utf-8"));
+  meta.variants = { ...meta.variants, [variant]: vmeta };
+  writeFileSync(metaFile, JSON.stringify(meta, null, 2) + "\n", "utf-8");
+}
+
+/**
+ * 语言变体采集（ref-<variant>.wav/txt）：与主资产同管线同规格判据；不冒烟（试听矩阵归 s-voice）；
+ * 采集失败仅标 degraded——变体契约为「有干净素材则收」，不拖累主资产验收。
+ */
+export async function runVariant(character, variant, vEntry) {
+  const voiceDir = path.join(VOICES_DIR, character);
+  const fileBase = `ref-${variant}`;
+  const before = await assessVariant(voiceDir, variant);
+  if (before.complete) {
+    console.log(`[skip] ${character}:${variant} 变体已达标`);
+    return true;
+  }
+  for (const cand of vEntry.candidates ?? []) {
+    console.log(`[candidate] ${character}:${variant}/${cand.id}: ${cand.url}`);
+    if (!(await acquireRef(character, cand, voiceDir, fileBase))) continue;
+    // 测量一次同时服务规格判定与 meta 记录（afinfo/volumedetect 都是整段解码，避免双跑与双源不一致）；
+    // meta 只在规格通过后写入——variants meta 在场即「全程成功」，是幂等 skip 与 --verify 的判据锚点
+    const refWav = path.join(voiceDir, `${fileBase}.wav`);
+    const af = await measureWav(refWav);
+    const peakDb = measurePeakDb(refWav);
+    const spec = checkRefSpec({ ...(af ?? { channels: null, sampleRateHz: null, durationS: null }), maxVolumeDb: peakDb });
+    if (!spec.ok) {
+      console.error(`[fail] ${character}:${variant}/${cand.id}: 变体资产不达标 → ${spec.reasons.join("; ")}`);
+      continue;
+    }
+    mergeVariantMeta(voiceDir, variant, buildVariantMeta({ cand, afinfo: af ?? { durationS: null, sampleRateHz: null, channels: null }, peakDb, collectedAt: new Date().toISOString() }));
+    console.log(`[done] ${character}:${variant} 变体达标（候选 ${cand.id}）`);
+    return true;
+  }
+  console.error(`[degraded] ${character}:${variant} 全部候选失败，原因见 raw-log`);
+  return false;
+}
+
+/** 单角色采集：幂等跳过 → 候选序 fail-fast → 达标即冒烟 → 语言变体尽力而为 */
 export async function runCharacter(character) {
   const voiceDir = path.join(VOICES_DIR, character);
   const entry = MANIFEST[character];
@@ -248,6 +336,8 @@ export async function runCharacter(character) {
   const smokeBefore = existsSync(smokeFile) ? assessSmokeDuration((await measureWav(smokeFile))?.durationS ?? null).ok : false;
   if (before.complete && smokeBefore) {
     console.log(`[skip] ${character} 资产与冒烟均已达标，跳过`);
+    // 变体独立走幂等判据：主资产达标不蕴含变体已产出（变体可在主资产收齐后补采）
+    for (const [variant, vEntry] of Object.entries(entry.variants ?? {})) await runVariant(character, variant, vEntry);
     return true;
   }
   if (entry.candidates.length === 0) {
@@ -256,30 +346,7 @@ export async function runCharacter(character) {
   }
   for (const cand of entry.candidates) {
     console.log(`[candidate] ${character}/${cand.id}: ${cand.url}`);
-    const src = await downloadSource(character, cand);
-    if (!src) {
-      console.error(`[fail] ${character}/${cand.id}: 下载失败（详见 raw-log）`);
-      continue;
-    }
-    const processed = await processSegment(character, cand, src, voiceDir);
-    if (!processed) {
-      console.error(`[fail] ${character}/${cand.id}: 截取转制失败（详见 raw-log）`);
-      continue;
-    }
-    // 文本：官方台词优先，whisper 兜底
-    if (cand.text) {
-      writeRefTxt(voiceDir, cand.text, cand.textSource);
-    } else if (cand.transcribe) {
-      const text = await transcribeWithWhisper(character, path.join(voiceDir, "ref.wav"), voiceDir, cand.transcribe);
-      if (!text) {
-        console.error(`[fail] ${character}/${cand.id}: whisper 转写失败（详见 raw-log）`);
-        continue;
-      }
-      writeRefTxt(voiceDir, text, cand.textSource ?? `whisper 转写（openai-whisper 20250625，模型 ${cand.transcribe.model}）`);
-    } else {
-      console.error(`[fail] ${character}/${cand.id}: 候选既无官方文本也无转写方案`);
-      continue;
-    }
+    if (!(await acquireRef(character, cand, voiceDir, "ref"))) continue;
     const af = await measureWav(path.join(voiceDir, "ref.wav"));
     const peakDb = measurePeakDb(path.join(voiceDir, "ref.wav"));
     writeFileSync(
@@ -298,6 +365,7 @@ export async function runCharacter(character) {
       continue;
     }
     console.log(`[done] ${character}: 资产与冒烟全部达标（候选 ${cand.id}）`);
+    for (const [variant, vEntry] of Object.entries(entry.variants ?? {})) await runVariant(character, variant, vEntry);
     return true;
   }
   console.error(`[degraded] ${character}: 全部候选失败，原因见 raw-log`);

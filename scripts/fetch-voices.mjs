@@ -6,7 +6,7 @@
 import path from "node:path";
 import { CHARACTERS, MANIFEST } from "./lib/manifest.mjs";
 import { VOICES_DIR, VOICEPACK_DOCS, RAW_LOG } from "./lib/config.mjs";
-import { assessCharacter, assessSmokeDuration, measureWav } from "./lib/verify.mjs";
+import { assessCharacter, assessVariant, assessSmokeDuration, measureWav } from "./lib/verify.mjs";
 
 const argv = process.argv.slice(2);
 const verifyOnly = argv.includes("--verify");
@@ -45,6 +45,20 @@ async function verifyAll() {
       smoke: smoke.ok ? `PASS(${smokeDur}s)` : `FAIL(${smokeDur ?? "缺失"})`,
       reasons: [...r.reasons, ...(smoke.ok ? [] : smoke.reasons.map((x) => `smoke ${x}`))],
     });
+    // manifest 已声明的变体即「应产出」：不可得素材应从 manifest 除名并在报告记 N/A，
+    // 声明了却缺档属采集缺口，计入审计失败
+    for (const v of Object.keys(MANIFEST[c].variants ?? {})) {
+      const vr = await assessVariant(dir, v);
+      if (!vr.complete) allOk = false;
+      rows.push({
+        character: `${c}:${v}`,
+        variant: true,
+        asset: vr.complete ? "PASS" : "FAIL",
+        afinfo: vr.afinfo,
+        peak_db: vr.maxVolumeDb,
+        reasons: vr.reasons,
+      });
+    }
   }
   console.log(JSON.stringify({ raw_log: RAW_LOG, results: rows }, null, 2));
   process.exit(allOk ? 0 : 1);

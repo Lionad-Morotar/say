@@ -213,3 +213,53 @@ test("日志行 schema：必备字段齐全且 JSONL 追加", async () => {
   assert.equal(lines[0].duration_ms, 5);
   assert.equal(lines[1].stderr_tail, "e");
 });
+
+test("checkVariantBundle：wav 规格+txt 非空+变体 meta 在场，三者齐才 complete", async () => {
+  const { checkVariantBundle } = await import("./verify.mjs");
+  const variantMeta = {
+    source_urls: ["u"], language: "en", dub: "d", license_note: "n",
+    processing: "raw", afinfo: { durationS: 15, sampleRateHz: 24000, channels: 1 }, collected_at: "t",
+  };
+  const good = {
+    refExists: true,
+    afinfoOut: AFINFO_REAL.replace("6.056708", "15.0"),
+    volumedetectErr: "max_volume: -3.0 dB",
+    refTxt: "line",
+    variantMeta,
+  };
+  assert.deepEqual(checkVariantBundle(good), { complete: true, reasons: [] });
+  assert.equal(checkVariantBundle({ ...good, refTxt: " \n" }).complete, false);
+  assert.equal(checkVariantBundle({ ...good, refExists: false }).complete, false);
+  // 时长不足 10s（AFINFO_REAL 原值 6.06s）→ 规格不过
+  const short = checkVariantBundle({ ...good, afinfoOut: AFINFO_REAL });
+  assert.equal(short.complete, false);
+  assert.match(short.reasons.join(), /越界/);
+});
+
+test("checkVariantBundle 拼束回归：wav+txt 达标但 meta.variants 缺失 → 不 complete", async () => {
+  // 失败候选残留的 wav/txt 不得被幂等 skip 拼成达标束——variants meta 只在候选全程成功末尾写入
+  const { checkVariantBundle } = await import("./verify.mjs");
+  const stale = {
+    refExists: true,
+    afinfoOut: AFINFO_REAL.replace("6.056708", "15.0"),
+    volumedetectErr: "max_volume: -3.0 dB",
+    refTxt: "另一候选残留的文本",
+    variantMeta: null,
+  };
+  const r = checkVariantBundle(stale);
+  assert.equal(r.complete, false);
+  assert.match(r.reasons.join(), /meta\.variants/);
+  // meta 段缺 afinfo 子字段同样不放行（与主 meta 同构校验）
+  const partial = checkVariantBundle({ ...stale, variantMeta: { source_urls: ["u"], language: "en", dub: "d", license_note: "n", processing: "raw", afinfo: {}, collected_at: "t" } });
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.reasons.filter((x) => x.includes("afinfo.")).length, 3);
+});
+
+test("assessVariant 实测：主资产 ref.wav 在盘而变体缺失 → 不 complete", async () => {
+  const { assessVariant } = await import("./verify.mjs");
+  const os = await import("node:os");
+  const r = await assessVariant(mkdtempSync(path.join(os.tmpdir(), "variant-")), "en");
+  assert.equal(r.complete, false);
+  assert.equal(r.afinfo, null);
+  assert.match(r.reasons.join(), /不存在/);
+});

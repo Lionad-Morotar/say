@@ -46,15 +46,29 @@ export function checkRefSpec({ channels, sampleRateHz, durationS, maxVolumeDb })
   return { ok: reasons.length === 0, reasons };
 }
 
-/** meta.json 字段齐全性（八字段契约见任务书）；afinfo 子字段（时长/采样率/声道）同样必填 */
-export function checkMeta(meta) {
-  if (meta == null || typeof meta !== "object") return { ok: false, missing: [...META_REQUIRED] };
-  const missing = META_REQUIRED.filter((k) => meta[k] == null);
+/** meta 字段齐全性核心：required 清单 + afinfo 子字段（时长/采样率/声道）必填 */
+function metaMissing(meta, required) {
+  if (meta == null || typeof meta !== "object") return [...required];
+  const missing = required.filter((k) => meta[k] == null);
   if (meta.afinfo != null && typeof meta.afinfo === "object") {
     for (const sub of ["durationS", "sampleRateHz", "channels"]) {
       if (meta.afinfo[sub] == null) missing.push(`afinfo.${sub}`);
     }
   }
+  return missing;
+}
+
+/** meta.json 字段齐全性（八字段契约见任务书） */
+export function checkMeta(meta) {
+  const missing = metaMissing(meta, META_REQUIRED);
+  return { ok: missing.length === 0, missing };
+}
+
+/** 变体 meta 契约与主 meta 同构，唯省 character（嵌套于 meta.variants.<v> 下语境自明） */
+export const VARIANT_META_REQUIRED = META_REQUIRED.filter((k) => k !== "character");
+
+export function checkVariantMeta(variantMeta) {
+  const missing = metaMissing(variantMeta, VARIANT_META_REQUIRED);
   return { ok: missing.length === 0, missing };
 }
 
@@ -132,6 +146,52 @@ export async function assessCharacter(voiceDir) {
     volumedetectErr: maxDb != null ? `max_volume: ${maxDb} dB` : null,
     refTxt: existsSync(refTxt) ? readFileSync(refTxt, "utf-8") : null,
     metaJson: existsSync(metaFile) ? readFileSync(metaFile, "utf-8") : null,
+  });
+  return { ...bundle, afinfo: af, maxVolumeDb: maxDb };
+}
+
+/**
+ * 语言变体资产束判据（ref-<v>.wav + ref-<v>.txt + meta.variants.<v>）：音频规格与主资产同口径。
+ * meta 段参与判据是防「拼束固化」的关键：wav/txt 可能来自不同候选的失败残留，
+ * 而 variants meta 只在候选全程成功末尾写入——缺 meta 即判 incomplete，杜绝幂等 skip 把错配束静默放行。
+ */
+export function checkVariantBundle({ refExists, afinfoOut, volumedetectErr, refTxt, variantMeta }) {
+  const reasons = [];
+  if (!refExists) reasons.push("ref-<variant>.wav 不存在");
+  const af = afinfoOut != null ? parseAfinfo(afinfoOut) : null;
+  const maxDb = volumedetectErr != null ? parseMaxVolumeDb(volumedetectErr) : null;
+  const spec = checkRefSpec({ ...(af ?? { channels: null, sampleRateHz: null, durationS: null }), maxVolumeDb: maxDb });
+  if (!spec.ok) reasons.push(...spec.reasons.map((r) => `ref-<variant>.wav ${r}`));
+  if (refTxt == null || refTxt.trim() === "") reasons.push("ref-<variant>.txt 缺失或空白");
+  const metaCheck = checkVariantMeta(variantMeta);
+  if (!metaCheck.ok) reasons.push(...metaCheck.missing.map((k) => `meta.variants 缺字段 ${k}`));
+  return { complete: reasons.length === 0, reasons };
+}
+
+/** 单变体实测评估（幂等跳过与 --verify 的共同入口） */
+export async function assessVariant(voiceDir, variant) {
+  const refWav = `${voiceDir}/ref-${variant}.wav`;
+  const refTxt = `${voiceDir}/ref-${variant}.txt`;
+  const metaFile = `${voiceDir}/meta.json`;
+  const refExists = existsSync(refWav);
+  let af = null;
+  let maxDb = null;
+  if (refExists) {
+    af = await measureWav(refWav);
+    maxDb = measurePeakDb(refWav);
+  }
+  let meta = null;
+  try {
+    meta = existsSync(metaFile) ? JSON.parse(readFileSync(metaFile, "utf-8")) : null;
+  } catch {
+    meta = null;
+  }
+  const bundle = checkVariantBundle({
+    refExists,
+    afinfoOut: af ? fakeAfinfoText(af) : null,
+    volumedetectErr: maxDb != null ? `max_volume: ${maxDb} dB` : null,
+    refTxt: existsSync(refTxt) ? readFileSync(refTxt, "utf-8") : null,
+    variantMeta: meta?.variants?.[variant] ?? null,
   });
   return { ...bundle, afinfo: af, maxVolumeDb: maxDb };
 }

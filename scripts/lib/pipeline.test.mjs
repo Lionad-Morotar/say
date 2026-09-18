@@ -2,7 +2,7 @@
 // 期望值锚定 s-bench raw-log 中已验证的 zipvoice 命令形态（独立事实源）。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripRefComments, buildCutArgs, buildSmokeCmd, buildMeta, buildRoughCut, buildSeparateArgs, SEP_PAD_S } from "./pipeline.mjs";
+import { stripRefComments, buildCutArgs, buildSmokeCmd, buildMeta, buildVariantMeta, buildRoughCut, buildSeparateArgs, SEP_PAD_S } from "./pipeline.mjs";
 
 test("buildRoughCut 外扩截取窗并给出内层偏移，起点钳到 0", () => {
   assert.deepEqual(buildRoughCut({ startS: 90.5, endS: 119.5 }), { rough: { startS: 90.5 - SEP_PAD_S, endS: 119.5 + SEP_PAD_S }, innerStartS: SEP_PAD_S, innerEndS: SEP_PAD_S + 29 });
@@ -89,4 +89,45 @@ test("buildMeta 分离素材 processing 记工具与参数摘要", () => {
   const cand = { id: "x", kind: "ytdlp", url: "u", language: "en", dub: "en", separate: { tool: "demucs", version: "4.0.1", args: "htdemucs --two-stems=vocals" } };
   const meta = buildMeta({ character: "lucy", cand, afinfo: { durationS: 20, sampleRateHz: 24000, channels: 1 }, peakDb: -3, collectedAt: "t" });
   assert.equal(meta.processing, "separated:demucs@4.0.1:htdemucs --two-stems=vocals");
+});
+
+test("findYtFile 接受 1MB 以下的完整短剪辑，拒绝空壳与 .part（短素材误判回归）", async () => {
+  const { findYtFile, YT_EXTS } = await import("./pipeline.mjs");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const dir = mkdtempSync(path.join(tmpdir(), "ytfile-"));
+  const dest = path.join(dir, "clip");
+  // 40s 级官方短剪辑 bestaudio 实测 ~720KB：>1MB 旧判据会误判下载失败
+  assert.equal(findYtFile(dest), undefined);
+  writeFileSync(dest + ".webm", Buffer.alloc(720_000));
+  assert.equal(findYtFile(dest), dest + ".webm");
+  writeFileSync(dest + ".webm", Buffer.alloc(0));
+  assert.equal(findYtFile(dest), undefined);
+  // 白名单覆盖 yt-dlp bestaudio 全部实测落盘扩展名
+  for (const ext of ["webm", "mka", "mp4", "m4a", "opus", "ogg"]) assert.ok(YT_EXTS.includes(ext));
+});
+
+test("buildVariantMeta 省 character 保留其余契约字段", () => {
+  const cand = { id: "x", kind: "ytdlp", url: "u", pageUrl: "p", language: "en", dub: "en-US", textSource: "src", separate: { tool: "demucs", version: "4.1.0", args: "a" } };
+  const m = buildVariantMeta({ cand, afinfo: { durationS: 14, sampleRateHz: 24000, channels: 1 }, peakDb: -12, collectedAt: "t" });
+  assert.ok(!("character" in m));
+  assert.deepEqual(m.source_urls, ["u", "p"]);
+  assert.equal(m.language, "en");
+  assert.equal(m.license_note, "官方公开素材，本机个人使用，不再分发");
+  assert.equal(m.processing, "separated:demucs@4.1.0:a");
+  assert.deepEqual(m.afinfo, { durationS: 14, sampleRateHz: 24000, channels: 1, peakDb: -12 });
+  assert.equal(m.transcription.source, "src");
+});
+
+test("writeRefTxt fileBase 参数产出 ref-<variant>.txt", async () => {
+  const { writeRefTxt, stripRefComments } = await import("./pipeline.mjs");
+  const { mkdtempSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const dir = mkdtempSync(path.join(tmpdir(), "reftxt-"));
+  writeRefTxt(dir, "Hello variant", "官方字幕", "ref-en");
+  const content = readFileSync(path.join(dir, "ref-en.txt"), "utf-8");
+  assert.match(content, /^Hello variant\n\n# 转写来源: 官方字幕\n$/);
+  assert.equal(stripRefComments(content), "Hello variant");
 });
