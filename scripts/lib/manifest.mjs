@@ -49,7 +49,24 @@ export const MANIFEST = {
   },
   lucy: {
     displayName: "Lucy（Cyberpunk Edgerunners，美配英语）",
-    candidates: [],
+    candidates: [
+      {
+        // 第2集结尾月球 braindance 场景（Netflix 美配音轨，社区转录上传）：
+        // 8.62-18.76s 为 Lucy 向 David 解说 BD 原理的连续独白，平静语气、单角色无叠话；
+        // 有官方英文字幕逐字稿，故走 text 免转写（决策：官方文本优先于 whisper）。
+        // 场景全程 BGM（silencedetect 35dB/0.8s 实测 0 静音段）须人声分离
+        id: "ep2-moon-bd-en",
+        kind: "ytdlp",
+        url: "https://www.youtube.com/watch?v=XS5wcjZgnbQ",
+        pageUrl: "https://www.netflix.com/title/81054853",
+        language: "en",
+        dub: "en-US（Emi Lo）",
+        cut: { startS: 8.4, endS: 18.9 },
+        separate: { tool: "demucs", version: "4.1.0", args: "htdemucs --two-stems=vocals，粗截外扩 5s" },
+        text: "That's through your personal link. It's what allows you to feel the heat of the sun. Of course, you'd be fried crispy if I gave you the actual temp. I made sure to lower the settings, mellow out the experience.",
+        textSource: "Netflix 官方英文字幕逐字稿（tvshowtranscripts.ourboard.org s01e02《Like A Boy》转录页 + getyarn.io 字幕库双源互证；窗口边界经 whisper 生产预览时间轴 8.62-18.76s 核定）",
+      },
+    ],
   },
   frieren: {
     displayName: "芙莉莲（葬送的芙莉莲，日配主收）",
