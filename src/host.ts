@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ChildProcessByStdio } from "node:child_process";
@@ -35,6 +35,8 @@ export interface Host {
   writeStderr(text: string): void;
   spawn(cmd: string, args: readonly string[], opts?: SpawnOpts): Promise<SpawnOutcome>;
   fileExists(path: string): boolean;
+  /** 目录直下条目名（仅目录），失败或不存在返回空：角色音色注册表的枚举通道 */
+  listDirEntries(path: string): readonly string[];
   readFileText(path: string): Promise<string>;
   readStdin(): Promise<string>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
@@ -104,6 +106,16 @@ export function createNodeHost(env: EnvMap = process.env): Host {
       });
     },
     fileExists: (p) => existsSync(p),
+    listDirEntries: (p) => {
+      try {
+        return readdirSync(p, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+      } catch {
+        // 目录不存在或不可读按空处理：注册表为空是合法状态，角色嗓只是没有而已
+        return [];
+      }
+    },
     readFileText: (p) => readFile(p, "utf8"),
     readStdin: async () => {
       const chunks: Buffer[] = [];

@@ -8,3 +8,4 @@ dist/
 # misc
 .DS_Store
 *.log
+docs/research/voice-matrix/samples/

@@ -251,11 +251,25 @@ describe("资产漂移防线：numSpeakers 与音频能量交叉校验", () => {
 });
 
 describe("routeEngine：音色名与显式引擎选择的仲裁", () => {
-  const host = createFakeHost({ env: { HOME: "/h" }, files: { "/usr/bin/say": "" } }).host;
+  const host = createFakeHost({
+    env: { HOME: "/h" },
+    files: { "/usr/bin/say": "" },
+    spawnOutcome: () => ({
+      exitCode: 0,
+      signal: null,
+      stdout: "Tingting            zh_CN    # 你好\nAlbert              en_US    # Hello\n",
+      stderr: "",
+    }),
+  }).host;
   const sherpa = { name: "sherpa", chunkable: true } as const;
   const system = createSystemEngine(host);
   const registry = createRegistry([
-    { ...sherpa, isAvailable: async () => ({ ok: true as const }), listVoices: async () => [], speak: async () => ({ type: "device" as const }) },
+    {
+      ...sherpa,
+      isAvailable: async () => ({ ok: true as const }),
+      listVoices: async () => [],
+      speak: async () => ({ type: "device" as const }),
+    },
     system,
   ]);
   const config = (over: Partial<ResolvedConfig> = {}): ResolvedConfig => ({
@@ -267,33 +281,37 @@ describe("routeEngine：音色名与显式引擎选择的仲裁", () => {
     ...over,
   });
 
-  it("显式选 system 时引擎优先于音色名，sherpa 音色名原样交给系统嗓", () => {
-    const routed = routeEngine(config({ engine: "system", voice: "af_maple" }), registry);
+  it("显式选 system 时音色名原样下传：系统嗓语义由 say 自己兜，不替用户改主意", async () => {
+    const routed = await routeEngine(config({ engine: "system", voice: "af_maple" }), registry);
     expect(routed.engine?.name).toBe("system");
     expect(routed.voice).toBe("af_maple");
   });
 
-  it("默认引擎下 sherpa 音色名走 sherpa", () => {
-    expect(routeEngine(config({ voice: "af_maple" }), registry).engine?.name).toBe("sherpa");
-    expect(routeEngine(config({ voice: "zh_baker" }), registry).engine?.name).toBe("sherpa");
+  it("默认引擎下 sherpa 音色名走 sherpa", async () => {
+    expect((await routeEngine(config({ voice: "af_maple" }), registry)).engine?.name).toBe("sherpa");
+    expect((await routeEngine(config({ voice: "zh_baker" }), registry)).engine?.name).toBe("sherpa");
   });
 
-  it("未指定音色走配置引擎", () => {
-    expect(routeEngine(config(), registry).engine?.name).toBe("sherpa");
+  it("未指定音色走配置引擎", async () => {
+    expect((await routeEngine(config(), registry)).engine?.name).toBe("sherpa");
   });
 
-  it("非 sherpa 音色名委派给系统嗓：用户写 -v Tingting 的意图是那个嗓子", () => {
-    const routed = routeEngine(config({ voice: "Tingting" }), registry);
+  it("系统嗓开放集内的名字委派给系统嗓：用户写 -v Tingting 的意图是那个嗓子", async () => {
+    const routed = await routeEngine(config({ voice: "Tingting" }), registry);
     expect(routed.engine?.name).toBe("system");
     expect(routed.voice).toBe("Tingting");
   });
 
-  it("委派目标未登记时仍用配置引擎，由引擎自己报未知音色而不是静默换嗓", () => {
-    const onlySherpa = createRegistry([registry.get("sherpa")!]);
-    expect(routeEngine(config({ voice: "Tingting" }), onlySherpa).engine?.name).toBe("sherpa");
+  it("系统嗓清单里也没有的名字交回配置引擎，由引擎报未登记并触发回退", async () => {
+    expect((await routeEngine(config({ voice: "nosuch" }), registry)).engine?.name).toBe("sherpa");
   });
 
-  it("未登记引擎返回 undefined，交由编排层给出点名报错", () => {
-    expect(routeEngine(config({ engine: "nope" }), registry).engine).toBeUndefined();
+  it("委派目标未登记时仍用配置引擎，由引擎自己报未知音色而不是静默换嗓", async () => {
+    const onlySherpa = createRegistry([registry.get("sherpa")!]);
+    expect((await routeEngine(config({ voice: "Tingting" }), onlySherpa)).engine?.name).toBe("sherpa");
+  });
+
+  it("未登记引擎返回 undefined，交由编排层给出点名报错", async () => {
+    expect((await routeEngine(config({ engine: "nope" }), registry)).engine).toBeUndefined();
   });
 });

@@ -50,6 +50,13 @@ export interface EngineAdapter {
    */
   readonly chunkable: boolean;
   /**
+   * 音色名仲裁的可选能力位：引擎声明自己认识哪些音色名。
+   * 音色空间分三块——引擎内嵌表（kokoro 103 嗓）、角色克隆嗓（目录即注册表）、
+   * 系统嗓开放集（不可枚举成本内）。路由仲裁用认领结果定归属，
+   * 谁都不认领的名字走配置引擎报「未登记」再触发回退。
+   */
+  ownsVoice?(voice: string): boolean;
+  /**
    * 可用性按待用音色判定，而不是按引擎整体判定：一个引擎可以挂多套权重，
    * 只装了其中一套时，点名另一套的音色该报「那套缺什么」，
    * 而用已装那套的音色应当照常出声，不能被无关资产连坐。
@@ -81,11 +88,17 @@ export interface ConfigFile {
   voice?: unknown;
   speed?: unknown;
   fallback?: unknown;
+  /** 预设选择键：本文件声明的默认预设名 */
+  preset?: unknown;
+  /** `[presets.<name>]` 分节原样：音色×语速×引擎组合表，类型校验在 resolveConfig */
+  presets?: unknown;
 }
 
 export interface FlagOverrides {
   voice?: string | null;
   rateWpm?: number | null;
+  /** 自研 flag，不走 macOS say 透传 */
+  preset?: string | null;
 }
 
 export type FallbackPolicy = "system" | "off";

@@ -130,11 +130,21 @@
     <tr><td>mlx Qwen3-TTS 0.6B（中文挑战者，1.9GB）</td><td><audio controls preload="none" src="../research/bench/samples/mlx-qwen3-subprocess-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/mlx-qwen3-subprocess-zh-short.wav"></audio></td></tr>
     <tr><td>系统 say 对照（Eddy / Tingting）</td><td><audio controls preload="none" src="../research/bench/samples/system-say-spawn-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/system-say-spawn-zh-short.wav"></audio></td></tr>
   </table>
-  <p style="margin:10px 0 0"><b>抉择点①（编排者推荐，可推翻）</b>：工程底座定 <b>sherpa-onnx Node 绑定</b>；默认嗓候选二选一交 s-voice 试听终裁——<b>ZipVoice 角色克隆嗓</b>（短句热 2.4-2.6s 达标）或 <b>Kokoro en 嗓</b>（1.59s 最快通用兜底）；matcha 登记为 zh 快速预设（个人使用，非商用数据集注记）；mlx-qwen3 不默认接线（体量与延迟无优势），留中文挑战位。</p>
+  <p style="margin:10px 0 0"><b>抉择点①（编排者推荐，s-voice 阶段更新）</b>：工程底座定 <b>sherpa-onnx Node 绑定</b>；默认嗓候选二选一交 s-voice 试听终裁——<b>ZipVoice 角色克隆嗓</b>（短句热 2.4-2.6s 达标）或 <b>Kokoro en 嗓</b>（1.59s 最快通用兜底）；matcha 登记为 zh 快速预设（个人使用，非商用数据集注记）；mlx-qwen3 不默认接线（体量与延迟无优势），留中文挑战位。s-voice 实测：通用 en 预设（kokoro）2.0s、zh 预设（matcha）1.1s，与 bench 同量级，预设机制真机成立。</p>
+  <p class="dim" style="margin:6px 0 0">s-cli-core 阶段勘误：<b>kokoro 通用嗓已换 fp32 权重</b>（int8 权重有 NaN 缺陷，见蓝图 D20 追记），旧 bench 的 int8 行数值仅供参考不再对现行权重负责；CLI 首次出声 ~3.5s（进程冷启动 + 模型加载，超蓝图 3s 判据，长会话中可接受，daemon 常驻是否立项看实际使用频率再核）。zipvoice 克隆链路 int8 正常（NaN 缺陷不在该路径）。</p>
 </div>
 <div class="panel">
-  <b>角色克隆试听矩阵</b> <span class="dim">—— s-voice 完成后追加：芙莉莲 / D.Va / Lucy × en/zh，供你选默认角色嗓</span>
-  <p class="dim">（占位）</p>
+  <b>角色克隆试听矩阵（s-voice 已完成，10 条样本全出声）</b> <span class="dim">—— 同一段文本跨角色对照：英文 <code>The build finished and all tests passed.</code> ｜ 中文 <code>构建完成，全部测试通过。</code></span>
+  <table>
+    <tr><th>角色嗓（ZipVoice 零样本克隆）</th><th>en</th><th>zh</th></tr>
+    <tr><td>Lucy（主参考 10.5s，每调用 ~4.4s）</td><td><audio controls preload="none" src="../research/voice-matrix/samples/lucy-en.wav"></audio></td><td><audio controls preload="none" src="../research/voice-matrix/samples/lucy-zh.wav"></audio></td></tr>
+    <tr><td>D.Va（主参考 28s，每调用 ~13-14s）</td><td><audio controls preload="none" src="../research/voice-matrix/samples/dva-en.wav"></audio></td><td><audio controls preload="none" src="../research/voice-matrix/samples/dva-zh.wav"></audio></td></tr>
+    <tr><td>Frieren 主参考（日配跨语种，畸变最大）</td><td><audio controls preload="none" src="../research/voice-matrix/samples/frieren-en-main.wav"></audio></td><td><audio controls preload="none" src="../research/voice-matrix/samples/frieren-zh-main.wav"></audio></td></tr>
+    <tr><td>Frieren 语言变体（专用参考，推荐）</td><td><audio controls preload="none" src="../research/voice-matrix/samples/frieren-en.wav"></audio></td><td><audio controls preload="none" src="../research/voice-matrix/samples/frieren-zh.wav"></audio></td></tr>
+    <tr><td>通用嗓对照（--preset en / --preset zh）</td><td><audio controls preload="none" src="../research/voice-matrix/samples/universal-en.wav"></audio></td><td><audio controls preload="none" src="../research/voice-matrix/samples/universal-zh.wav"></audio></td></tr>
+  </table>
+  <p class="dim" style="margin:6px 0 0">数据：峰值 0.5-1.0（参考仅 0.17-0.30，克隆链路自带增益）｜ 耗时与参考音频长度近似线性（lucy 4.4s / frieren 6-9s / dva 13-14s）；frieren 主参考做跨语种克隆时长畸变 3.8 倍（8.9s vs 语言变体 2.35s），跨语种用变体。`-r` 加速在克隆链路被忽略并有一行 stderr 说明（speed > 1 会让推理绑定 native 层永久挂起，探针取证）；放慢方向可用但非线性。</p>
+  <p style="margin:10px 0 0"><b>抉择点②（编排者推荐，可推翻）</b>：默认角色嗓推荐 <b>lucy</b>（en 主语言、参考最短、每调用 ~4.4s 在延迟预算内）；frieren 系列仅用语言变体；dva 参考太长成本翻倍。克隆质量（音色相似度）需你试听裁决——样本已全部可达，默认角色嗓由试听终裁。</p>
 </div>
 
 <!-- 关键决策速览 -->

@@ -89,12 +89,12 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const resolution = resolveConfig({
     env: host.env,
     file: loaded.file,
-    flags: { voice: request.voice, rateWpm: request.rateWpm },
+    flags: { voice: request.voice, rateWpm: request.rateWpm, preset: request.preset },
   });
   for (const warning of resolution.warnings) host.writeStderr(`say: ${warning}\n`);
   const config = resolution.config;
 
-  const route = routeEngine(config, deps.registry);
+  const route = await routeEngine(config, deps.registry);
   const engine = route.engine;
   const target = request.output;
   const temp = target === null ? null : `${target}.${host.pid}.tmp`;

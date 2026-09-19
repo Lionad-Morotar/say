@@ -10,6 +10,7 @@ describe("parseArgv：say 兼容调用面", () => {
       voice: null,
       rateWpm: null,
       output: null,
+      preset: null,
     });
   });
 
@@ -85,6 +86,13 @@ describe("parseArgv：say 兼容调用面", () => {
   ])("未支持 flag 整条原样透传：%j", (...argv) => {
     expect(parseArgv(argv as string[])).toEqual({ kind: "passthrough", argv });
   });
+
+  it.each([[["--preset", "calm", "hi"]], [["--preset=calm", "hi"]]])(
+    "--preset 是本工具的自研 flag，不走透传：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "speak", preset: "calm" });
+    },
+  );
 
   it("透传判定优先于受支持 flag 的解析错误", () => {
     expect(parseArgv(["--progress", "-v"])).toEqual({
