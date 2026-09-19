@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+// 入口保持纯 JavaScript：Node 的类型擦除只按 .ts 后缀启用，无扩展名文件一律当 JS 解析
+import { main } from "../src/index.ts";
+
+main().then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error) => {
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    process.stderr.write(`say: ${detail}\n`);
+    process.exitCode = 1;
+  },
+);
