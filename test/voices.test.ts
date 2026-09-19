@@ -37,7 +37,6 @@ describe("splitVoiceName：音色名到角色与语言变体的拆解", () => {
   it("不存在的角色名不认领，返回 null 而不是构造指向空目录的引用", () => {
     expect(splitVoiceName(makeHost().host, VOICES, "nosuch")).toBeNull();
     expect(splitVoiceName(makeHost().host, VOICES, "nosuch-en")).toBeNull();
-    expect(splitVoiceName(makeHost().host, VOICES, "nosuch-en")).toBeNull();
   });
 });
 

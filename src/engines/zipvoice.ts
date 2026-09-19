@@ -91,10 +91,15 @@ export function createZipvoiceEngine(options: ZipvoiceEngineOptions): EngineAdap
       if (error instanceof EngineError) throw error;
       throw new EngineError(`角色 "${requirement.character}" 的参考转写读取失败：${messageOf(error)}`);
     }
+    // 加速请求不下发（native 绑定在 speed > 1 时挂起），但要明说而不是静默吞掉
+    const speed = wpmToSpeed(task.rateWpm);
+    if (speed > 1) {
+      host.writeStderr(`say: 克隆嗓暂不支持加速语速，-r ${task.rateWpm} 被忽略（推理绑定在 speed > 1 时会挂起）\n`);
+    }
     const result = await synth({
       spec: { dir: modelDir, vocoder },
       text: task.text,
-      speed: wpmToSpeed(task.rateWpm),
+      speed,
       referenceAudioPath: requirement.audioPath,
       referenceText,
     });

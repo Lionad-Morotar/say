@@ -5,6 +5,7 @@ import {
   type ZipvoiceSynth,
   type ZipvoiceSynthRequest,
 } from "../src/engines/zipvoice.ts";
+import { generationSpeedOf } from "../src/engines/zipvoice-binding.ts";
 import { createRegistry, routeEngine } from "../src/engines/index.ts";
 import { createSystemEngine } from "../src/engines/system.ts";
 import { createSherpaEngine } from "../src/engines/sherpa.ts";
@@ -106,9 +107,9 @@ describe("createZipvoiceEngine.isAvailable", () => {
 });
 
 describe("createZipvoiceEngine.speak：角色资产到克隆参数", () => {
-  it("角色名解析出参考音频与转写，speed 由 wpm 换算", async () => {
+  it("角色名解析出参考音频与转写，speed 由 wpm 换算，加速请求被警告忽略", async () => {
     const { synth, calls } = fakeSynth();
-    const { engine } = makeEngine(synth);
+    const { engine, fake } = makeEngine(synth);
     await engine.speak("hi", speakOpts({ rateWpm: 350 }));
     expect(calls[0]).toMatchObject({
       referenceAudioPath: `${VOICES}/lucy/ref.wav`,
@@ -117,6 +118,7 @@ describe("createZipvoiceEngine.speak：角色资产到克隆参数", () => {
     });
     expect(calls[0]?.spec.dir).toBe(MODEL_DIR);
     expect(calls[0]?.spec.vocoder).toBe(VOCODER);
+    expect(fake.stderr.join("")).toContain("加速");
   });
 
   it("产出形态是 pcm，写盘与播放由编排层统一负责", async () => {
@@ -163,6 +165,16 @@ describe("createZipvoiceEngine.listVoices 与 ownsVoice", () => {
     expect(engine.ownsVoice?.("frieren-en")).toBe(true);
     expect(engine.ownsVoice?.("nosuch")).toBe(false);
     expect(engine.ownsVoice?.("af_maple")).toBe(false);
+  });
+});
+
+describe("generationSpeedOf：克隆链路语速安全域", () => {
+  it("放慢请求原样放行，等于 1 与加速请求一律不下发", () => {
+    expect(generationSpeedOf(0.8)).toBe(0.8);
+    expect(generationSpeedOf(0.5)).toBe(0.5);
+    expect(generationSpeedOf(1)).toBeNull();
+    expect(generationSpeedOf(2)).toBeNull();
+    expect(generationSpeedOf(0)).toBeNull();
   });
 });
 
@@ -219,11 +231,6 @@ describe("routeEngine：角色嗓加入后的三分仲裁", () => {
   it("谁也不认领的名字交给配置引擎，由其报未登记并触发回退", async () => {
     const routed = await routeEngine(config({ voice: "nosuch" }), registry);
     expect(routed.engine?.name).toBe("sherpa");
-  });
-
-  it("显式点名 zipvoice 时角色音色走 zipvoice", async () => {
-    const routed = await routeEngine(config({ engine: "zipvoice", voice: "frieren-zh" }), registry);
-    expect(routed.engine?.name).toBe("zipvoice");
   });
 
   it("显式点名 zipvoice 时角色音色走 zipvoice", async () => {

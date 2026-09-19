@@ -52,6 +52,15 @@ const NUM_THREADS = 2;
 /** 逐句合成上限：与 kokoro/matcha 同口径，批处理会把首句出声时间推迟到整批算完 */
 const MAX_NUM_SENTENCES = 1;
 
+/**
+ * 克隆链路的语速安全域：实测 speed > 1 会让 generateAsync 在 native 层永久挂起
+ * （探针取证：0.5/0.8/1.0 正常出声，1.2/1.5 挂起且全部推理线程空闲等不到返回），
+ * 因此只放行 <1 的放慢请求，等于 1 或加速请求一律不下发——宁可忽略也不冒挂死风险。
+ */
+export function generationSpeedOf(speed: number): number | null {
+  return speed > 0 && speed < 1 ? speed : null;
+}
+
 export function zipvoiceModelDir(modelsDir: string): string {
   return join(modelsDir, SHERPA_SUBDIR, ZIPVOICE_DIR_NAME);
 }
@@ -122,12 +131,15 @@ export async function synthesizeWithBinding(request: ZipvoiceSynthRequest): Prom
   try {
     const handle = await loadHandle(request.spec, sherpa);
     const wave = waveOf(request.referenceAudioPath, sherpa);
-    // 克隆参数经 GenerationConfig 下发（sid 域不适用零样本克隆），distill 权重按 4 步流匹配
+    // 克隆参数经 GenerationConfig 下发（sid 域不适用零样本克隆），distill 权重按 4 步流匹配；
+    // 语速只在安全域内下发，加速请求在适配层已警告忽略
+    const generationSpeed = generationSpeedOf(request.speed);
     const generation: GenerationConfigOptions = new sherpa.GenerationConfig({
       referenceAudio: wave.samples,
       referenceSampleRate: wave.sampleRate,
       referenceText: request.referenceText,
       numSteps: ZIPVOICE_NUM_STEPS,
+      ...(generationSpeed === null ? {} : { speed: generationSpeed }),
     });
     const audio = await withStderrMuted(() =>
       handle.generateAsync({
