@@ -10,9 +10,13 @@ export interface SayPaths {
 
 /**
  * 一次合成的产出形态。形态决定了上层还要做什么：
- * file 已由引擎写好（上层只负责改名），device 已由引擎直接送出声卡。
+ * file 已由引擎写好（上层只负责改名），device 已由引擎直接送出声卡，
+ * pcm 是裸样本（上层负责封容器、写盘与播放）。
  */
-export type AudioOut = { type: "file"; path: string } | { type: "device" };
+export type AudioOut =
+  | { type: "file"; path: string }
+  | { type: "device" }
+  | { type: "pcm"; samples: Float32Array; sampleRate: number };
 
 export type Availability = { ok: true } | { ok: false; reason: string };
 
@@ -28,7 +32,11 @@ export interface SpeakOptions {
   voice: string | null;
   /** 用户面语速，单位 wpm。单位换算归各引擎，避免三层配置出现两种口径 */
   rateWpm: number;
-  /** 非空即要求写入该路径（上层给的是 PID 临时名，不是最终目标） */
+  /**
+   * 非空即要求写入该路径（上层给的是 PID 临时名，不是最终目标）。
+   * 只是给「能自己写盘」的引擎的提示：进程内引擎一律返回 pcm，
+   * 临时名与原子改名的生命周期归编排层，引擎不该知道 PID 命名规则。
+   */
   output: string | null;
 }
 

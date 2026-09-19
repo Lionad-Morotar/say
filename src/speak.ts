@@ -1,10 +1,13 @@
+import { join } from "node:path";
 import type { CliRequest } from "./cli.ts";
 import { parseArgv } from "./cli.ts";
 import { parseConfigFile, resolveConfig } from "./config.ts";
-import type { EngineRegistry } from "./engines/index.ts";
+import { routeEngine, type EngineRegistry } from "./engines/index.ts";
 import { messageOf } from "./errors.ts";
 import type { Host } from "./host.ts";
+import { playFile } from "./player.ts";
 import type { AudioOut, ConfigFile, SayPaths } from "./types.ts";
+import { encodeWav } from "./wav.ts";
 
 export interface RunDeps {
   host: Host;
@@ -76,18 +79,58 @@ async function loadConfigFile(
   return { file: parsed.value, warnings: [] };
 }
 
-async function deliver(
-  host: Host,
-  out: AudioOut,
-  target: string | null,
-): Promise<{ delivered: boolean; error: string | null }> {
-  if (out.type !== "file" || target === null || out.path === target) {
-    return { delivered: true, error: null };
+interface Delivery {
+  /** `-o` 的最终目标；null 表示要出声卡而不是落盘 */
+  target: string | null;
+  /** 目标的 PID 临时名，引擎自己写盘时用的就是它 */
+  temp: string | null;
+}
+
+type DeliveryResult = { delivered: boolean; error: string | null };
+
+const DELIVERED: DeliveryResult = { delivered: true, error: null };
+
+/** 播放用的暂存 wav。带 PID 是为了并发调用各写各的，互不覆盖对方正在播的文件 */
+function stagingPath(host: Host): string {
+  return join(host.tmpDir, `say-${host.pid}.wav`);
+}
+
+async function deliverPcm(host: Host, out: Extract<AudioOut, { type: "pcm" }>, delivery: Delivery): Promise<DeliveryResult> {
+  const bytes = encodeWav(out.samples, out.sampleRate);
+  const { target, temp } = delivery;
+  if (target !== null && temp !== null) {
+    try {
+      await host.writeFile(temp, bytes);
+      // 临时名 → 目标名的原子改名：读者要么看到旧文件要么看到完整新文件，不会读到半截
+      await host.renameFile(temp, target);
+      return DELIVERED;
+    } catch (error) {
+      return { delivered: false, error: `写入 ${target} 失败：${messageOf(error)}` };
+    }
   }
-  // 临时名 → 目标名的原子改名：并发调用各写各的 PID 临时文件，互不覆盖半截产物
+  const staging = stagingPath(host);
+  try {
+    await host.writeFile(staging, bytes);
+    await playFile(host, staging);
+    return DELIVERED;
+  } catch (error) {
+    return { delivered: false, error: messageOf(error) };
+  } finally {
+    try {
+      await host.removeFile(staging);
+    } catch {
+      // 暂存文件留着只是脏，不该盖掉真正的失败原因
+    }
+  }
+}
+
+async function deliver(host: Host, out: AudioOut, delivery: Delivery): Promise<DeliveryResult> {
+  if (out.type === "pcm") return deliverPcm(host, out, delivery);
+  const { target } = delivery;
+  if (out.type === "device" || target === null || out.path === target) return DELIVERED;
   try {
     await host.renameFile(out.path, target);
-    return { delivered: true, error: null };
+    return DELIVERED;
   } catch (error) {
     return { delivered: false, error: `写入 ${target} 失败：${messageOf(error)}` };
   }
@@ -123,7 +166,8 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   for (const warning of resolution.warnings) host.writeStderr(`say: ${warning}\n`);
   const config = resolution.config;
 
-  const engine = deps.registry.get(config.engine);
+  const route = routeEngine(config, deps.registry);
+  const engine = route.engine;
   if (engine === undefined) {
     return fail(
       host,
@@ -141,7 +185,7 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   let out: AudioOut;
   try {
     out = await engine.speak(source.text, {
-      voice: config.voice,
+      voice: route.voice,
       rateWpm: config.rateWpm,
       output: temp,
     });
@@ -149,7 +193,7 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
     return fail(host, messageOf(error));
   }
 
-  const delivery = await deliver(host, out, target);
+  const delivery = await deliver(host, out, { target, temp });
   if (!delivery.delivered) return fail(host, delivery.error ?? "产物交付失败");
   return EXIT_OK;
 }

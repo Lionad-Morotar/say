@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rename } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { EnvMap } from "./types.ts";
@@ -28,12 +29,16 @@ export interface SpawnOutcome {
 export interface Host {
   env: EnvMap;
   pid: number;
+  /** 播放用临时 wav 的落点。进程内引擎只产出裸样本，封容器后需要一个可写目录 */
+  tmpDir: string;
   now(): number;
   writeStderr(text: string): void;
   spawn(cmd: string, args: readonly string[], opts?: SpawnOpts): Promise<SpawnOutcome>;
   fileExists(path: string): boolean;
   readFileText(path: string): Promise<string>;
   readStdin(): Promise<string>;
+  writeFile(path: string, data: Uint8Array): Promise<void>;
+  removeFile(path: string): Promise<void>;
   renameFile(from: string, to: string): Promise<void>;
 }
 
@@ -70,6 +75,9 @@ export function createNodeHost(env: EnvMap = process.env): Host {
   return {
     env,
     pid: process.pid,
+    // 从注入的 env 解析而不是直接问 os.tmpdir()：后者读的是 process.env，
+    // 测试用注入 env 隔离真实用户目录的约定会被绕过
+    tmpDir: env.TMPDIR?.replace(/\/+$/, "") || tmpdir(),
     now: () => Date.now(),
     writeStderr: (text) => {
       process.stderr.write(text);
@@ -101,6 +109,15 @@ export function createNodeHost(env: EnvMap = process.env): Host {
       const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
       return Buffer.concat(chunks).toString("utf8");
+    },
+    writeFile: (path, data) => writeFile(path, data),
+    // 清理是幂等意图：文件已经不在了就算达成目的，不该让收尾把成功的调用变成失败
+    removeFile: async (path) => {
+      try {
+        await unlink(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     },
     renameFile: (from, to) => rename(from, to),
   };

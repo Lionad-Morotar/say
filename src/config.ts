@@ -10,7 +10,7 @@ import type {
 } from "./types.ts";
 
 /** 默认引擎必须指向已登记的引擎，否则零配置调用会直接失败而不是出声 */
-export const DEFAULT_ENGINE = "system";
+export const DEFAULT_ENGINE = "sherpa";
 export const DEFAULT_FALLBACK: FallbackPolicy = "system";
 
 /**

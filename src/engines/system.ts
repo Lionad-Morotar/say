@@ -1,6 +1,6 @@
 import { EngineError } from "../errors.ts";
 import { defineExecutor } from "../executor.ts";
-import type { Host } from "../host.ts";
+import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
 import type { Availability, EngineAdapter, VoiceInfo } from "../types.ts";
 
 /** 容器格式必须显式声明：实测 `say -o x.wav` 直接失败（Opening output file failed: fmt?），扩展名并不触发推断 */
@@ -35,7 +35,7 @@ export function parseSayVoiceList(stdout: string): VoiceInfo[] {
  * 系统 say 适配：既是 `engine = "system"` 的正常通道，也是神经引擎失败时的回退目标。
  * 走子进程执行器——它没有可进程内调用的绑定，拓扑上只能是 subprocess。
  */
-export function createSystemEngine(host: Host, sayBin: string): EngineAdapter {
+export function createSystemEngine(host: Host, sayBin: string = SYSTEM_SAY_BIN): EngineAdapter {
   const executor = defineExecutor("subprocess", async (task) => {
     const args: string[] = [];
     if (task.voice !== null) args.push("-v", task.voice);

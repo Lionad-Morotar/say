@@ -10,6 +10,7 @@ export interface SpawnRecord {
 export interface FakeHostOptions {
   env?: EnvMap;
   pid?: number;
+  tmpDir?: string;
   /** 存在的文件路径 → 内容；未列出的路径视为不存在 */
   files?: Record<string, string>;
   stdin?: string;
@@ -26,6 +27,8 @@ export interface FakeHostOptions {
 export function createFakeHost(options: FakeHostOptions = {}) {
   const files = new Map(Object.entries(options.files ?? {}));
   const renames: Array<{ from: string; to: string }> = [];
+  const writes: Array<{ path: string; bytes: Uint8Array }> = [];
+  const removes: string[] = [];
   const spawns: SpawnRecord[] = [];
   const stderr: string[] = [];
   const defaultExit = options.exitCode ?? 0;
@@ -33,6 +36,7 @@ export function createFakeHost(options: FakeHostOptions = {}) {
   const host: Host = {
     env: options.env ?? {},
     pid: options.pid ?? 4242,
+    tmpDir: options.tmpDir ?? "/tmp",
     now: () => 0,
     writeStderr: (text) => {
       stderr.push(text);
@@ -49,10 +53,20 @@ export function createFakeHost(options: FakeHostOptions = {}) {
       return content;
     },
     readStdin: async () => options.stdin ?? "",
+    writeFile: async (path, data) => {
+      writes.push({ path, bytes: data });
+      files.set(path, "");
+    },
+    removeFile: async (path) => {
+      removes.push(path);
+      files.delete(path);
+    },
     renameFile: async (from, to) => {
       renames.push({ from, to });
+      files.set(to, files.get(from) ?? "");
+      files.delete(from);
     },
   };
 
-  return { host, spawns, stderr, renames, files };
+  return { host, spawns, stderr, renames, writes, removes, files };
 }
