@@ -69,7 +69,8 @@ type PresetTable = Readonly<Record<string, PresetDefinition>>;
 function mergePresetTables(raw: unknown, warnings: string[]): PresetTable {
   const merged: Record<string, PresetDefinition> = { ...BUILTIN_PRESETS };
   if (isAbsent(raw)) return merged;
-  if (typeof raw !== "object" || raw === null) {
+  // 数组 typeof 也是 "object"：不拦住会把条目按索引并成名为 "0" 的幻影预设
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     warnings.push(`config presets 期望分节表，已忽略：${JSON.stringify(raw)}`);
     return merged;
   }

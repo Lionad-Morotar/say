@@ -90,7 +90,7 @@ describe("parseArgv：say 兼容调用面", () => {
   it.each([[["--preset", "calm", "hi"]], [["--preset=calm", "hi"]]])(
     "--preset 是本工具的自研 flag，不走透传：%j",
     (argv) => {
-      expect(parseArgv(argv)).toMatchObject({ kind: "speak", preset: argv[0] === "--preset=calm" ? "calm" : "calm" });
+      expect(parseArgv(argv)).toMatchObject({ kind: "speak", preset: "calm" });
     },
   );
 

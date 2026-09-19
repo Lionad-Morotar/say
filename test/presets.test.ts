@@ -101,6 +101,16 @@ describe("resolveConfig 预设机制", () => {
     expect(warnings.join("\n")).toContain("bad");
   });
 
+  it("presets 顶层是数组时整体降级警告，不产出按索引命名的幻影预设", () => {
+    const { config, warnings } = resolveConfig({
+      env: {},
+      file: { presets: [{ voice: "x" }] },
+      flags: {},
+    });
+    expect(config).toMatchObject(DEFAULTS);
+    expect(warnings.join("\n")).toContain("期望分节表");
+  });
+
   it("预设的坏字段值经同一宽容通道降级，其余字段仍生效", () => {
     const { config, warnings } = resolveConfig({
       env: {},
