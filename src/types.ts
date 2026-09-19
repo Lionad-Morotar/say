@@ -88,11 +88,17 @@ export interface ConfigFile {
   voice?: unknown;
   speed?: unknown;
   fallback?: unknown;
+  /** 预设选择键：本文件声明的默认预设名 */
+  preset?: unknown;
+  /** `[presets.<name>]` 分节原样：音色×语速×引擎组合表，类型校验在 resolveConfig */
+  presets?: unknown;
 }
 
 export interface FlagOverrides {
   voice?: string | null;
   rateWpm?: number | null;
+  /** 自研 flag，不走 macOS say 透传 */
+  preset?: string | null;
 }
 
 export type FallbackPolicy = "system" | "off";

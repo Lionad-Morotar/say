@@ -18,7 +18,7 @@ describe("parseConfigFile：TOML 子集宽容解析", () => {
     });
   });
 
-  it("注释、空行与未知键（含未来 presets 分节）不影响已知键读出", () => {
+  it("注释、空行与未知键不影响已知键读出，presets 分节按原样读出", () => {
     const text = [
       "# 全局配置",
       "",
@@ -27,7 +27,10 @@ describe("parseConfigFile：TOML 子集宽容解析", () => {
       "[presets.calm]",
       'voice = "bf_vale"',
     ].join("\n");
-    expect(parseConfigFile(text)).toEqual({ ok: true, value: { engine: "sherpa" } });
+    expect(parseConfigFile(text)).toEqual({
+      ok: true,
+      value: { engine: "sherpa", presets: { calm: { voice: "bf_vale" } } },
+    });
   });
 
   it("语法损坏返回 error 而非抛错，调用方据此降级", () => {

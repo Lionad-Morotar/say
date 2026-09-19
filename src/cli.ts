@@ -13,14 +13,16 @@ export type CliRequest =
       voice: string | null;
       rateWpm: number | null;
       output: string | null;
+      preset: string | null;
     }
   | { kind: "passthrough"; argv: string[] }
   | { kind: "usage-error"; message: string };
 
-type CanonicalFlag = "voice" | "rate" | "output" | "input";
+type CanonicalFlag = "voice" | "rate" | "output" | "input" | "preset";
 
 /**
- * 受支持面 = man say 里本 shim 自己实现的选项。不在此表的选项一律整条透传，
+ * 受支持面 = man say 里本 shim 自己实现的选项，外加自研的 --preset（预设选择）。
+ * 不在此表的选项一律整条透传，
  * 长尾（-a/-n/--progress/--interactive/音频格式族）由 /usr/bin/say 兜住，
  * 兼容面因此是「say 的子集 + 其余原样转交」而不是逐项复刻。
  */
@@ -33,6 +35,7 @@ const SUPPORTED_FLAGS: ReadonlyMap<string, CanonicalFlag> = new Map<string, Cano
   ["--output-file", "output"],
   ["-f", "input"],
   ["--input-file", "input"],
+  ["--preset", "preset"],
 ]);
 
 /** 负数与 `-` 开头的正文（如 "-1 tests failed"）会被当成选项名，落到透传分支由系统 say 处理 */
@@ -51,6 +54,7 @@ export function parseArgv(argv: readonly string[]): CliRequest {
   let voice: string | null = null;
   let rateWpm: number | null = null;
   let output: string | null = null;
+  let preset: string | null = null;
   let flagsEnded = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -95,6 +99,8 @@ export function parseArgv(argv: readonly string[]): CliRequest {
       output = value;
     } else if (canonical === "input") {
       inputFile = value;
+    } else if (canonical === "preset") {
+      preset = value;
     } else {
       const rate = parseRate(value);
       if (rate === null) {
@@ -104,5 +110,5 @@ export function parseArgv(argv: readonly string[]): CliRequest {
     }
   }
 
-  return { kind: "speak", texts, inputFile, voice, rateWpm, output };
+  return { kind: "speak", texts, inputFile, voice, rateWpm, output, preset };
 }
