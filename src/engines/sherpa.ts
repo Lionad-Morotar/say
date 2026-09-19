@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { EngineError } from "../errors.ts";
 import { defineExecutor } from "../executor.ts";
 import type { Host } from "../host.ts";
@@ -76,6 +77,15 @@ function assertSpeakerTable(spec: SherpaModelSpec, numSpeakers: number): void {
   }
 }
 
+/**
+ * 目录报绝对路径、文件只报名字：八个绝对路径拼成一行没人读得下去，
+ * 而只报第一个又会让人修一个、再跑、再撞下一个。
+ */
+function missingAssetReason(dir: string, missing: readonly string[]): string {
+  const names = missing.map((file) => basename(file));
+  return `${dir} 缺少 ${names.length} 项：${names.join(", ")}`;
+}
+
 export interface SherpaEngineOptions {
   host: Host;
   /** 模型缓存根目录（如 ~/.cache/say/models），sherpa 资产在其下的 sherpa/ 子目录 */
@@ -96,22 +106,41 @@ export function createSherpaEngine(options: SherpaEngineOptions): EngineAdapter 
   const kokoroReady = (): boolean => kokoroRequiredFiles(kokoroDir).every((file) => host.fileExists(file));
   const matchaReady = (): boolean => matchaRequiredFiles(matchaDir, vocoder).every((file) => host.fileExists(file));
 
-  function specOf(voice: string): { spec: SherpaModelSpec; sid: number } {
-    const kokoroSid = kokoroSidOf(voice);
-    if (kokoroSid !== null) return { spec: { kind: "kokoro", dir: kokoroDir }, sid: kokoroSid };
-    const matchaSid = matchaSidOf(voice);
-    if (matchaSid !== null) {
-      if (!matchaReady()) {
-        throw new EngineError(`音色 "${voice}" 需要 matcha 资产，但 ${matchaDir} 不完整`);
-      }
-      return { spec: { kind: "matcha", dir: matchaDir, vocoder }, sid: matchaSid };
+  /**
+   * 音色 → 模型规格、sid 与该模型的文件清单。
+   * 一个引擎挂两套权重，可用性必须按「这次要用哪套」判定，
+   * 否则只装了 matcha 的机器上点名 zh_baker 会被 kokoro 缺失连坐。
+   */
+  function requirementOf(voice: string | null): { spec: SherpaModelSpec; sid: number; files: readonly string[] } {
+    const name = voice ?? DEFAULT_VOICE;
+    const kokoroSid = kokoroSidOf(name);
+    if (kokoroSid !== null) {
+      return { spec: { kind: "kokoro", dir: kokoroDir }, sid: kokoroSid, files: kokoroRequiredFiles(kokoroDir) };
     }
-    throw new EngineError(`sherpa 未登记音色 "${voice}"`);
+    const matchaSid = matchaSidOf(name);
+    if (matchaSid !== null) {
+      return {
+        spec: { kind: "matcha", dir: matchaDir, vocoder },
+        sid: matchaSid,
+        files: matchaRequiredFiles(matchaDir, vocoder),
+      };
+    }
+    throw new EngineError(`sherpa 未登记音色 "${name}"`);
+  }
+
+  function missingFiles(files: readonly string[]): string[] {
+    return files.filter((file) => !host.fileExists(file));
   }
 
   const executor = defineExecutor("in-process", async (task) => {
-    const voice = task.voice ?? DEFAULT_VOICE;
-    const { spec, sid } = specOf(voice);
+    const { spec, sid, files } = requirementOf(task.voice);
+    // 可用性预检之外再查一次：直接把缺文件的规格交给 native 只会换来一句语焉不详的配置错误
+    const missing = missingFiles(files);
+    if (missing.length > 0) {
+      throw new EngineError(
+        `音色 "${task.voice ?? DEFAULT_VOICE}" 所需资产不完整：${missingAssetReason(spec.dir, missing)}`,
+      );
+    }
     const result = await synth({ spec, text: task.text, sid, speed: wpmToSpeed(task.rateWpm) });
     assertSpeakerTable(spec, result.numSpeakers);
     assertAudible(spec, result.samples);
@@ -120,10 +149,18 @@ export function createSherpaEngine(options: SherpaEngineOptions): EngineAdapter 
 
   return {
     name: "sherpa",
-    async isAvailable(): Promise<Availability> {
-      // 一次列全缺失项：只报第一个会让人修一个、再跑、再撞下一个，解包不全的模型目录尤其如此
-      const missing = kokoroRequiredFiles(kokoroDir).filter((file) => !host.fileExists(file));
-      return missing.length === 0 ? { ok: true } : { ok: false, reason: `缺少模型文件 ${missing.join(", ")}` };
+    async isAvailable(voice: string | null): Promise<Availability> {
+      let requirement: ReturnType<typeof requirementOf>;
+      try {
+        requirement = requirementOf(voice);
+      } catch {
+        // 认不出的音色名不在可用性层判死：合成层能给出「未登记音色 X」这种精确原因
+        return { ok: true };
+      }
+      const missing = missingFiles(requirement.files);
+      return missing.length === 0
+        ? { ok: true }
+        : { ok: false, reason: missingAssetReason(requirement.spec.dir, missing) };
     },
     async listVoices(): Promise<VoiceInfo[]> {
       const voices: VoiceInfo[] = [];

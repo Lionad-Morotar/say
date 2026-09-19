@@ -51,8 +51,8 @@ function fakeSynth(result: Partial<Awaited<ReturnType<SherpaSynth>>> = {}) {
   return { synth, calls };
 }
 
-function makeEngine(synth: SherpaSynth, files: Record<string, string> = {}) {
-  const fake = createFakeHost({ env: { HOME: "/h" }, files: { ...KOKORO_FILES, ...files } });
+function makeEngine(synth: SherpaSynth, files: Record<string, string> = {}, replace = false) {
+  const fake = createFakeHost({ env: { HOME: "/h" }, files: replace ? files : { ...KOKORO_FILES, ...files } });
   return { engine: createSherpaEngine({ host: fake.host, modelsDir: MODELS, synth }), fake };
 }
 
@@ -80,10 +80,10 @@ describe("wpmToSpeed：用户面 wpm 到 kokoro speed 倍率的换算", () => {
   });
 });
 
-describe("createSherpaEngine.isAvailable：按模型缓存在盘与否判定", () => {
+describe("createSherpaEngine.isAvailable：按待用音色对应的模型在盘与否判定", () => {
   it("kokoro 必需文件齐全即可用", async () => {
     const { engine } = makeEngine(fakeSynth().synth);
-    expect(await engine.isAvailable()).toEqual({ ok: true });
+    expect(await engine.isAvailable(null)).toEqual({ ok: true });
   });
 
   it("缺 voices.bin 即不可用，原因点名缺失文件", async () => {
@@ -94,7 +94,7 @@ describe("createSherpaEngine.isAvailable：按模型缓存在盘与否判定", (
     );
     const fake = createFakeHost({ env: { HOME: "/h" }, files: withoutVoices });
     const engine = createSherpaEngine({ host: fake.host, modelsDir: MODELS, synth: fakeSynth().synth });
-    const availability = await engine.isAvailable();
+    const availability = await engine.isAvailable(null);
     expect(availability.ok).toBe(false);
     if (!availability.ok) expect(availability.reason).toContain("voices.bin");
   });
@@ -102,12 +102,23 @@ describe("createSherpaEngine.isAvailable：按模型缓存在盘与否判定", (
   it("解包不全时一次列全缺失项，不用修一个再撞下一个", async () => {
     const fake = createFakeHost({ env: { HOME: "/h" }, files: { [`${KOKORO_DIR}/tokens.txt`]: "" } });
     const engine = createSherpaEngine({ host: fake.host, modelsDir: MODELS, synth: fakeSynth().synth });
-    const availability = await engine.isAvailable();
+    const availability = await engine.isAvailable(null);
     expect(availability.ok).toBe(false);
     if (!availability.ok) {
       expect(availability.reason).toContain("model.onnx");
       expect(availability.reason).toContain("voices.bin");
       expect(availability.reason).toContain("espeak-ng-data");
+    }
+  });
+
+  it("缺失原因报目录绝对路径加文件名，不把八个绝对路径拼成一行", async () => {
+    const fake = createFakeHost({ env: { HOME: "/h" }, files: {} });
+    const engine = createSherpaEngine({ host: fake.host, modelsDir: MODELS, synth: fakeSynth().synth });
+    const availability = await engine.isAvailable(null);
+    expect(availability.ok).toBe(false);
+    if (!availability.ok) {
+      expect(availability.reason).toContain(`${KOKORO_DIR} 缺少 8 项：`);
+      expect(availability.reason).not.toContain(`${KOKORO_DIR}/model.onnx`);
     }
   });
 
@@ -117,15 +128,41 @@ describe("createSherpaEngine.isAvailable：按模型缓存在盘与否判定", (
     );
     const fake = createFakeHost({ env: { HOME: "/h" }, files: int8Only });
     const engine = createSherpaEngine({ host: fake.host, modelsDir: MODELS, synth: fakeSynth().synth });
-    const availability = await engine.isAvailable();
+    const availability = await engine.isAvailable(null);
     expect(availability.ok).toBe(false);
     if (!availability.ok) expect(availability.reason).toContain("model.onnx");
   });
 
   it("matcha 缺失不影响 kokoro 可用性：两者是并列音色来源而非依赖", async () => {
     const { engine } = makeEngine(fakeSynth().synth);
-    expect((await engine.isAvailable()).ok).toBe(true);
+    expect((await engine.isAvailable(null)).ok).toBe(true);
     expect(await engine.listVoices()).toHaveLength(103);
+  });
+
+  it("只装了 matcha 时 matcha 音色可用，不被无关的 kokoro 缺失判死", async () => {
+    const { engine } = makeEngine(fakeSynth().synth, MATCHA_FILES, true);
+    expect((await engine.isAvailable("zh_baker")).ok).toBe(true);
+    expect((await engine.isAvailable("baker")).ok).toBe(true);
+  });
+
+  it("只装了 matcha 时默认嗓不可用，原因指向 kokoro 资产而不是 matcha", async () => {
+    const { engine } = makeEngine(fakeSynth().synth, MATCHA_FILES, true);
+    const availability = await engine.isAvailable(null);
+    expect(availability.ok).toBe(false);
+    if (!availability.ok) expect(availability.reason).toContain("kokoro-multi-lang-v1_1");
+  });
+
+  it("只装了 kokoro 时 matcha 音色不可用，原因指向 matcha 资产", async () => {
+    const { engine } = makeEngine(fakeSynth().synth);
+    const availability = await engine.isAvailable("zh_baker");
+    expect(availability.ok).toBe(false);
+    if (!availability.ok) expect(availability.reason).toContain("matcha-icefall-zh-baker");
+  });
+
+  it("引擎认不出的音色名不在可用性层判死，留给合成层报精确原因", async () => {
+    const { engine } = makeEngine(fakeSynth().synth);
+    expect((await engine.isAvailable("Tingting")).ok).toBe(true);
+    await expect(engine.speak("hi", speakOpts({ voice: "Tingting" }))).rejects.toThrow(/Tingting/);
   });
 
   it("matcha 齐全时其音色并入列举", async () => {

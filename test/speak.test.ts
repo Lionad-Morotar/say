@@ -61,6 +61,24 @@ describe("system 引擎出声闭环", () => {
     expect(renames).toEqual([{ from: "/tmp/out.wav.4242.tmp", to: "/tmp/out.wav" }]);
   });
 
+  it("改名失败时清掉系统嗓写出的临时文件，不在目标目录留孤儿", async () => {
+    const ctx = setup({ env: { SAY_ENGINE: "system" }, pid: 5150 });
+    const host: Host = {
+      ...ctx.host,
+      renameFile: async () => {
+        throw new Error("EXDEV: cross-device link");
+      },
+    };
+    const code = await run(["-o", "/tmp/out.wav", "hi"], {
+      host,
+      paths: ctx.paths,
+      registry: createDefaultRegistry(host),
+      sayBin: SAY,
+    });
+    expect(code).toBe(1);
+    expect(ctx.removes).toEqual(["/tmp/out.wav.5150.tmp"]);
+  });
+
   it("-v 音色名原样下传", async () => {
     const { spawns } = await invoke({ env: { SAY_ENGINE: "system" } }, ["-v", "Tingting", "hi"]);
     const args = spawns[0]?.args ?? [];
@@ -268,14 +286,6 @@ describe("用法错误", () => {
   it("语速非数值退出码 2", async () => {
     const { code } = await invoke({}, ["-r", "abc", "hi"]);
     expect(code).toBe(2);
-  });
-});
-
-describe("未登记引擎", () => {
-  it("本切片以非零退出并点名缺失引擎（回退语义由后续切片接管）", async () => {
-    const { code, stderr } = await invoke({ env: { SAY_ENGINE: "nonexistent" } }, ["hi"]);
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("nonexistent");
   });
 });
 

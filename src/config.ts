@@ -124,7 +124,13 @@ export function resolveConfig(input: {
       ],
       warnings,
     ),
-    fallback: pickFallback([{ label: "config fallback", value: file.fallback }], warnings),
+    fallback: pickFallback(
+      [
+        { label: "SAY_FALLBACK", value: env.SAY_FALLBACK },
+        { label: "config fallback", value: file.fallback },
+      ],
+      warnings,
+    ),
     debug: env.SAY_DEBUG === "1",
   };
 

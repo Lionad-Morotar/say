@@ -11,6 +11,21 @@ const TMP = "/var/tmp";
 const MODELS = "/cache/models";
 const KOKORO = `${MODELS}/sherpa/kokoro-multi-lang-v1_1`;
 
+const MATCHA = `${MODELS}/sherpa/matcha-icefall-zh-baker`;
+const VOCODER = `${MODELS}/sherpa/vocoders/vocos-22khz-univ.onnx`;
+
+/** 只装 matcha 的环境：kokoro 缺席时点名 matcha 音色仍应走进程内推理，而不是被 kokoro 缺失连坐 */
+const MATCHA_ONLY_FILES: Record<string, string> = {
+  [SAY]: "",
+  [`${MATCHA}/model-steps-3.onnx`]: "",
+  [`${MATCHA}/lexicon.txt`]: "",
+  [`${MATCHA}/tokens.txt`]: "",
+  [`${MATCHA}/date.fst`]: "",
+  [`${MATCHA}/number.fst`]: "",
+  [`${MATCHA}/phone.fst`]: "",
+  [VOCODER]: "",
+};
+
 const KOKORO_FILES: Record<string, string> = {
   [SAY]: "",
   [`${KOKORO}/model.onnx`]: "",
@@ -30,7 +45,7 @@ function fakeSynth() {
   const calls: SherpaSynthRequest[] = [];
   const synth: SherpaSynth = async (request) => {
     calls.push(request);
-    return { samples: SAMPLES, sampleRate: 24000, numSpeakers: 103 };
+    return { samples: SAMPLES, sampleRate: 24000, numSpeakers: request.spec.kind === "kokoro" ? 103 : 1 };
   };
   return { synth, calls };
 }
@@ -47,7 +62,7 @@ async function invoke(options: FakeHostOptions, argv: readonly string[], synth: 
     ]),
     sayBin: SAY,
   });
-  return { code, ...fake };
+  return { code, ...fake, text: () => fake.stderr.join("") };
 }
 
 function riffOf(bytes: Uint8Array): string {
@@ -134,6 +149,55 @@ describe("进程内引擎的 pcm 交付：默认出声卡", () => {
   });
 });
 
+describe("落盘失败的收尾", () => {
+  it("改名失败时清掉 PID 临时文件，不在目标目录留孤儿", async () => {
+    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h" }, files: KOKORO_FILES });
+    const host = {
+      ...fake.host,
+      renameFile: async () => {
+        throw new Error("EXDEV: cross-device link");
+      },
+    };
+    const code = await run(["-o", "/out/a.wav", "hi"], {
+      host,
+      paths: resolvePaths(host.env),
+      registry: createRegistry([
+        createSherpaEngine({ host, modelsDir: MODELS, synth: fakeSynth().synth }),
+        createSystemEngine(host, SAY),
+      ]),
+      sayBin: SAY,
+    });
+    expect(code).toBe(1);
+    expect(fake.writes.map((write) => write.path)).toEqual(["/out/a.wav.99.tmp"]);
+    expect(fake.removes).toEqual(["/out/a.wav.99.tmp"]);
+    expect(fake.stderr.join("")).toContain("EXDEV");
+  });
+
+  it("写盘失败时不去改名，但把可能存在的半截临时文件清掉", async () => {
+    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h" }, files: KOKORO_FILES });
+    const host = {
+      ...fake.host,
+      writeFile: async () => {
+        throw new Error("ENOSPC: no space left on device");
+      },
+    };
+    const code = await run(["-o", "/out/a.wav", "hi"], {
+      host,
+      paths: resolvePaths(host.env),
+      registry: createRegistry([
+        createSherpaEngine({ host, modelsDir: MODELS, synth: fakeSynth().synth }),
+        createSystemEngine(host, SAY),
+      ]),
+      sayBin: SAY,
+    });
+    expect(code).toBe(1);
+    expect(fake.renames).toHaveLength(0);
+    // writeFile 是 O_CREAT|O_TRUNC 先建文件再写，ENOSPC 抛在写入阶段时半截临时文件已经落盘；
+    // 清理本身幂等（文件真不在时 ENOENT 被吞），所以写失败也恒清一次，不留孤儿
+    expect(fake.removes).toEqual(["/out/a.wav.99.tmp"]);
+  });
+});
+
 describe("音色名到引擎的路由在真实调用链上生效", () => {
   it("默认引擎是 sherpa，kokoro 音色名映射到表内 sid", async () => {
     const { synth, calls } = fakeSynth();
@@ -158,6 +222,27 @@ describe("音色名到引擎的路由在真实调用链上生效", () => {
     expect(args[args.indexOf("-v") + 1]).toBe("Tingting");
   });
 
+  it("只装 matcha 时点名 zh_baker 仍走进程内推理，不被 kokoro 缺失连坐", async () => {
+    const { synth, calls } = fakeSynth();
+    const { code, spawns, text } = await invoke(
+      { files: MATCHA_ONLY_FILES },
+      ["-v", "zh_baker", "-o", "/out/m.wav", "你好"],
+      synth,
+    );
+    expect(code).toBe(0);
+    expect(calls[0]?.spec).toMatchObject({ kind: "matcha" });
+    expect(spawns).toHaveLength(0);
+    expect(text()).toBe("");
+  });
+
+  it("只装 matcha 时用默认嗓回退到系统嗓，原因指向真正缺失的 kokoro 资产", async () => {
+    const { code, spawns, text } = await invoke({ files: MATCHA_ONLY_FILES }, ["-o", "/out/m.wav", "你好"]);
+    expect(code).toBe(0);
+    expect(spawns[0]?.cmd).toBe(SAY);
+    expect(text()).toContain("say: fallback:");
+    expect(text()).toContain("kokoro-multi-lang-v1_1");
+  });
+
   it("显式 engine = system 时引擎优先，sherpa 音色名原样交给系统嗓", async () => {
     const { synth, calls } = fakeSynth();
     const { spawns } = await invoke({ env: { SAY_ENGINE: "system" } }, ["-v", "af_maple", "hi"], synth);
@@ -168,21 +253,16 @@ describe("音色名到引擎的路由在真实调用链上生效", () => {
 });
 
 describe("sherpa 资产缺失", () => {
-  it("模型不在盘上即引擎不可用，原因点名缺失文件（回退由后续切片接管）", async () => {
-    const { code, stderr } = await invoke({ files: { [SAY]: "" } }, ["hi"]);
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("model.onnx");
-  });
-
-  it("盘上只有 int8 权重时同样判不可用，不会拿它去合成静音", async () => {
+  it("盘上只有 int8 权重时判不可用，改走系统嗓而不是拿它合成静音", async () => {
     const int8Only = Object.fromEntries(
       Object.keys(KOKORO_FILES).map((file) => [
         file === `${KOKORO}/model.onnx` ? `${KOKORO}/model.int8.onnx` : file,
         "",
       ]),
     );
-    const { code, stderr } = await invoke({ files: int8Only }, ["hi"]);
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("model.onnx");
+    const { code, spawns, text } = await invoke({ files: int8Only }, ["-o", "/out/a.wav", "hi"]);
+    expect(code).toBe(0);
+    expect(spawns[0]?.cmd).toBe(SAY);
+    expect(text()).toContain("model.onnx");
   });
 });

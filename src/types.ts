@@ -43,7 +43,13 @@ export interface SpeakOptions {
 /** 引擎适配器：注册表以 name 索引，登记即接线 */
 export interface EngineAdapter {
   readonly name: string;
-  isAvailable(): Promise<Availability>;
+  /**
+   * 可用性按待用音色判定，而不是按引擎整体判定：一个引擎可以挂多套权重，
+   * 只装了其中一套时，点名另一套的音色该报「那套缺什么」，
+   * 而用已装那套的音色应当照常出声，不能被无关资产连坐。
+   * 引擎认不出的音色名不在这层判死，留给 speak 报精确原因。
+   */
+  isAvailable(voice: string | null): Promise<Availability>;
   listVoices(): Promise<VoiceInfo[]>;
   speak(text: string, opts: SpeakOptions): Promise<AudioOut>;
 }
