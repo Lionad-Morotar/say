@@ -3,5 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "好听的 agent 说话体验：macOS say 的神经网络级 TTS 替代（路线调研中）"
+  "description": "好听的 agent 说话体验：macOS say 的神经网络级 TTS 替代（路线调研中）",
+  "bin": {
+    "say": "./bin/say"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^1.13.8",
+    "smol-toml": "^1.8.0"
+  }
 }

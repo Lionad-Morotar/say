@@ -1,0 +1,85 @@
+import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
+import { resolvePaths } from "../paths.ts";
+import type { EngineAdapter, ResolvedConfig } from "../types.ts";
+import { synthesizeWithBinding, type SherpaSynth } from "./sherpa-binding.ts";
+import { isSherpaVoice } from "./sherpa-voices.ts";
+import { createSherpaEngine } from "./sherpa.ts";
+import { createSystemEngine, parseSayVoiceList } from "./system.ts";
+import { createZipvoiceEngine } from "./zipvoice.ts";
+import { synthesizeWithBinding as synthesizeWithZipvoiceBinding, type ZipvoiceSynth } from "./zipvoice-binding.ts";
+
+export const SHERPA_ENGINE = "sherpa";
+export const SYSTEM_ENGINE = "system";
+export const ZIPVOICE_ENGINE = "zipvoice";
+
+export interface EngineRegistry {
+  get(name: string): EngineAdapter | undefined;
+  names(): string[];
+  /** 登记序的全量清单：音色认领仲裁要按登记序逐个询问 */
+  all(): readonly EngineAdapter[];
+}
+
+export function createRegistry(engines: readonly EngineAdapter[]): EngineRegistry {
+  const byName = new Map(engines.map((engine) => [engine.name, engine]));
+  return {
+    get: (name) => byName.get(name),
+    names: () => [...byName.keys()],
+    all: () => engines,
+  };
+}
+
+export interface EngineRoute {
+  engine: EngineAdapter | undefined;
+  /** 路由可能改写音色归属，实际下传的名字以这里为准 */
+  voice: string | null;
+}
+
+/**
+ * 音色名与引擎选择的仲裁。音色空间三分：
+ *
+ * 1. 显式点名 system 引擎时原样下传——系统嗓是开放集，音色语义由 say 自己兜，
+ *    用户点名 system 就是点名要那套行为，不替他改主意；
+ * 2. 其余引擎按登记序认领音色名（内嵌表 / 角色目录），认领即归属；
+ * 3. 系统嗓开放集（`-v Tingting` 的意图是那个具体嗓子）——认领失败后按系统嗓清单委派，
+ *    迁移过来的既有调用不因默认引擎是神经引擎而失效；
+ * 4. 谁也不认领的名字——交回配置引擎报「未登记」并触发回退：
+ *    `-v nosuch` 因此得到系统嗓 + 一行原因 + exit 0，而不是被系统 say 静默忽略成默认嗓。
+ */
+export async function routeEngine(config: ResolvedConfig, registry: EngineRegistry): Promise<EngineRoute> {
+  const configured = registry.get(config.engine);
+  const voice = config.voice;
+  if (voice === null || config.engine === SYSTEM_ENGINE) return { engine: configured, voice };
+  if (configured === undefined) return { engine: undefined, voice };
+  for (const engine of registry.all()) {
+    if (engine.name === SYSTEM_ENGINE) continue;
+    if (engine.ownsVoice?.(voice)) return { engine, voice };
+  }
+  const delegate = registry.get(SYSTEM_ENGINE);
+  if (delegate !== undefined) {
+    const voices = await delegate.listVoices();
+    if (voices.some((entry) => entry.name === voice)) return { engine: delegate, voice };
+  }
+  return { engine: configured, voice };
+}
+
+/**
+ * 登记即接线：实现 EngineAdapter 后在这里加一行，config 的 `engine = "<name>"`
+ * 与环境变量 SAY_ENGINE 立刻能切过去，不需要改编排层。
+ */
+export function createDefaultRegistry(
+  host: Host,
+  sayBin: string = SYSTEM_SAY_BIN,
+  synth: SherpaSynth = synthesizeWithBinding,
+  cloneSynth: ZipvoiceSynth = synthesizeWithZipvoiceBinding,
+): EngineRegistry {
+  const paths = resolvePaths(host.env);
+  return createRegistry([
+    createSherpaEngine({ host, modelsDir: paths.modelsDir, synth }),
+    createZipvoiceEngine({ host, modelsDir: paths.modelsDir, voicesDir: paths.voicesDir, synth: cloneSynth }),
+    createSystemEngine(host, sayBin),
+  ]);
+}
+
+export { createSherpaEngine, createSystemEngine, createZipvoiceEngine, parseSayVoiceList };
+export type { SherpaSynth, ZipvoiceSynth };
+export { isSherpaVoice };
