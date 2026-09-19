@@ -212,13 +212,27 @@ describe("音色名到引擎的路由在真实调用链上生效", () => {
     expect(calls[0]?.speed).toBe(2);
   });
 
-  it("非 sherpa 音色名委派给系统嗓，用户写 -v Tingting 拿到的就是那个嗓子", async () => {
+  it("非 sherpa 音色名按系统嗓清单委派，用户写 -v Tingting 拿到的就是那个嗓子", async () => {
     const { synth, calls } = fakeSynth();
-    const { code, spawns } = await invoke({}, ["-v", "Tingting", "hi"], synth);
+    const { code, spawns } = await invoke(
+      {
+        // 系统嗓开放集的枚举通道：`say -v ?` 的 stdout 形态（名字 + locale + 样例）
+        spawnOutcome: () => ({
+          exitCode: 0,
+          signal: null,
+          stdout: "Tingting            zh_CN    # 你好\nAlbert              en_US    # Hello\n",
+          stderr: "",
+        }),
+      },
+      ["-v", "Tingting", "hi"],
+      synth,
+    );
     expect(code).toBe(0);
     expect(calls).toHaveLength(0);
-    const args = spawns[0]?.args ?? [];
-    expect(spawns[0]?.cmd).toBe(SAY);
+    // 第一条 spawn 是 `say -v ?` 的清单枚举，第二条才是真正带正文的合成
+    const delivery = spawns[spawns.length - 1];
+    expect(delivery?.cmd).toBe(SAY);
+    const args = delivery?.args ?? [];
     expect(args[args.indexOf("-v") + 1]).toBe("Tingting");
   });
 

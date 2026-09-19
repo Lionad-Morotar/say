@@ -49,6 +49,18 @@ export function createFakeHost(options: FakeHostOptions = {}) {
       return options.spawnOutcome ? options.spawnOutcome(record) : { exitCode: defaultExit, signal: null, stdout: "", stderr: "" };
     },
     fileExists: (p) => files.has(p),
+    listDirEntries: (p) => {
+      // files 表是平的：以 `<dir>/x/` 前缀出现过即视为 dir 下有子目录 x（仅目录条目）
+      const prefix = p.endsWith("/") ? p : `${p}/`;
+      const names = new Set<string>();
+      for (const key of files.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const rest = key.slice(prefix.length);
+        const cut = rest.indexOf("/");
+        if (cut > 0) names.add(rest.slice(0, cut));
+      }
+      return [...names];
+    },
     readFileText: async (p) => {
       const content = files.get(p);
       if (content === undefined) throw new Error(`ENOENT: ${p}`);

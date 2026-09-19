@@ -27,9 +27,20 @@ declare module "sherpa-onnx-node" {
     tokens: string;
   }
 
+  export interface ZipvoiceModelConfig {
+    encoder: string;
+    decoder: string;
+    tokens: string;
+    lexicon: string;
+    dataDir: string;
+    /** vocos 24kHz：克隆链路专用，与 kokoro/matcha 的 22kHz vocoder 不通用 */
+    vocoder: string;
+  }
+
   export interface OfflineTtsModelConfig {
     kokoro?: KokoroModelConfig;
     matcha?: MatchaModelConfig;
+    zipvoice?: ZipvoiceModelConfig;
     numThreads?: number;
     provider?: string;
     debug?: boolean;
@@ -43,10 +54,21 @@ declare module "sherpa-onnx-node" {
     numThreads?: number;
   }
 
+  export interface WaveObject {
+    readonly samples: Float32Array;
+    readonly sampleRate: number;
+  }
+
   export interface GenerationConfigOptions {
     sid?: number;
     speed?: number;
     silenceScale?: number;
+    /** 零样本克隆参数（ZipVoice）：参考音频样本、采样率与逐字转写必须配对给出 */
+    referenceAudio?: Float32Array;
+    referenceSampleRate?: number;
+    referenceText?: string;
+    /** 流匹配步数：distill 权重按官方示例用 4 步 */
+    numSteps?: number;
   }
 
   export interface TtsRequest {
@@ -70,6 +92,8 @@ declare module "sherpa-onnx-node" {
   export interface SherpaOnnxModule {
     readonly OfflineTts: OfflineTtsConstructor;
     readonly GenerationConfig: new (options?: GenerationConfigOptions) => GenerationConfigOptions;
+    /** 读 wav 为 float32 样本（-1..1）：零样本克隆的参考音频读取通道 */
+    readWave(path: string): WaveObject;
     readonly version: string;
     readonly onnxruntimeVersion: string;
   }

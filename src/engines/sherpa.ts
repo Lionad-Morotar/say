@@ -12,7 +12,15 @@ import {
   type SherpaModelSpec,
   type SherpaSynth,
 } from "./sherpa-binding.ts";
-import { KOKORO_VOICE_COUNT, KOKORO_VOICES, MATCHA_VOICES, kokoroSidOf, matchaSidOf, sherpaVoiceLang } from "./sherpa-voices.ts";
+import {
+  KOKORO_VOICE_COUNT,
+  KOKORO_VOICES,
+  MATCHA_VOICES,
+  isSherpaVoice,
+  kokoroSidOf,
+  matchaSidOf,
+  sherpaVoiceLang,
+} from "./sherpa-voices.ts";
 
 export type { SherpaModelSpec, SherpaSynth, SherpaSynthRequest, SherpaSynthResult } from "./sherpa-binding.ts";
 
@@ -151,6 +159,8 @@ export function createSherpaEngine(options: SherpaEngineOptions): EngineAdapter 
     name: "sherpa",
     // 进程内推理只产出裸样本，块间可以拼成连续音频，也可以边合成边播
     chunkable: true,
+    // 内嵌表是本引擎的音色边界：路由仲裁据此把 sherpa 嗓从开放集里分出来
+    ownsVoice: isSherpaVoice,
     async isAvailable(voice: string | null): Promise<Availability> {
       let requirement: ReturnType<typeof requirementOf>;
       try {
