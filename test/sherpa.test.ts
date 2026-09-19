@@ -252,7 +252,7 @@ describe("资产漂移防线：numSpeakers 与音频能量交叉校验", () => {
 
 describe("routeEngine：音色名与显式引擎选择的仲裁", () => {
   const host = createFakeHost({ env: { HOME: "/h" }, files: { "/usr/bin/say": "" } }).host;
-  const sherpa = { name: "sherpa" } as const;
+  const sherpa = { name: "sherpa", chunkable: true } as const;
   const system = createSystemEngine(host);
   const registry = createRegistry([
     { ...sherpa, isAvailable: async () => ({ ok: true as const }), listVoices: async () => [], speak: async () => ({ type: "device" as const }) },

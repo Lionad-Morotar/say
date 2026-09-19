@@ -132,11 +132,12 @@ describe("正文来源优先级", () => {
     expect(spawns[0]?.stdin).toBe("file body");
   });
 
-  it("-f - 与零参数都读 stdin", async () => {
+  it("-f - 与零参数都读 stdin，尾随换行被规范化掉", async () => {
+    // echo 与管道总会带一个尾随换行，它对发音没有任何贡献却会参与分块计价
     const a = await invoke({ env: { SAY_ENGINE: "system" }, stdin: "piped\n" }, ["-f", "-"]);
-    expect(a.spawns[0]?.stdin).toBe("piped\n");
+    expect(a.spawns[0]?.stdin).toBe("piped");
     const b = await invoke({ env: { SAY_ENGINE: "system" }, stdin: "piped\n" }, []);
-    expect(b.spawns[0]?.stdin).toBe("piped\n");
+    expect(b.spawns[0]?.stdin).toBe("piped");
   });
 
   it("-f 指向不存在的文件是用法层失败，不去合成", async () => {

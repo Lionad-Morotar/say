@@ -17,6 +17,8 @@ export interface FakeHostOptions {
   /** 按命令与参数决定子进程结局；未匹配时按 exitCode 默认值 */
   spawnOutcome?: (record: SpawnRecord) => SpawnOutcome;
   exitCode?: number;
+  /** 注入时钟。默认恒 0 会让耗时字段全是零，测不出摘要行是否真的在计时 */
+  now?: () => number;
 }
 
 /**
@@ -37,7 +39,7 @@ export function createFakeHost(options: FakeHostOptions = {}) {
     env: options.env ?? {},
     pid: options.pid ?? 4242,
     tmpDir: options.tmpDir ?? "/tmp",
-    now: () => 0,
+    now: options.now ?? (() => 0),
     writeStderr: (text) => {
       stderr.push(text);
     },

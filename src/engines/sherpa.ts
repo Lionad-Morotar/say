@@ -149,6 +149,8 @@ export function createSherpaEngine(options: SherpaEngineOptions): EngineAdapter 
 
   return {
     name: "sherpa",
+    // 进程内推理只产出裸样本，块间可以拼成连续音频，也可以边合成边播
+    chunkable: true,
     async isAvailable(voice: string | null): Promise<Availability> {
       let requirement: ReturnType<typeof requirementOf>;
       try {

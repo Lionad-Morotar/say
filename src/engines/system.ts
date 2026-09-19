@@ -58,6 +58,9 @@ export function createSystemEngine(host: Host, sayBin: string = SYSTEM_SAY_BIN):
 
   return {
     name: "system",
+    // say 自己写盘或直推声卡，编排层拿不到裸样本，块间无从拼接；
+    // 它也没有单次长度上限，分块只会平白多出边界停顿
+    chunkable: false,
     // 系统嗓的音色是开放集合（且未知音色名会被 macOS say 静默忽略而非报错），
     // 可用性只取决于二进制在不在盘，与音色无关
     async isAvailable(_voice: string | null): Promise<Availability> {

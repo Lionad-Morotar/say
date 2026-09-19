@@ -44,6 +44,12 @@ export interface SpeakOptions {
 export interface EngineAdapter {
   readonly name: string;
   /**
+   * 引擎能否把产出交回编排层拼接。分块只对这样的引擎有意义：
+   * 进程内推理返回裸样本，块与块可以拼成一段连续音频，也能边合成边播；
+   * 自己写盘或直推声卡的引擎，块与块之间无从拼接，切开只会多出边界停顿。
+   */
+  readonly chunkable: boolean;
+  /**
    * 可用性按待用音色判定，而不是按引擎整体判定：一个引擎可以挂多套权重，
    * 只装了其中一套时，点名另一套的音色该报「那套缺什么」，
    * 而用已装那套的音色应当照常出声，不能被无关资产连坐。
