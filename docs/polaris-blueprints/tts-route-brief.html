@@ -120,8 +120,17 @@
   <p class="dim" style="margin:8px 0 0">若你试听后觉得人设嗓已够用，epic 可缩为 CLAUDE.md 一行改动（触发条件已登记雾区 F1）。可选零代码路径：系统设置下载「婷婷（增强版）」等神经音色（GUI 手动，两种入口说法待验）。</p>
 </div>
 <div class="panel">
-  <b>神经引擎样本</b> <span class="dim">—— s-bench 完成后追加：Kokoro en / ZipVoice 克隆演示 / matcha-zh / Qwen3-TTS</span>
-  <p class="dim">（占位）</p>
+  <b>神经引擎实测（s-bench 已完成，M3 本机 64 格矩阵）</b>
+  <p class="dim" style="margin:6px 0">短句热态延迟（agent 主场景，判据 ≤3s）：matcha-zh <b class="ok">0.41s</b>（仅中文）｜kokoro en <b class="ok">1.59s</b> / zh 4.25s｜<b>zipvoice 克隆嗓 en 2.49s / zh 2.43s</b>（克隆进延迟预算成立）｜mlx-qwen3 en 2.88s / zh 3.67s｜系统 say 对照 0.54-0.77s。长文本（60 词）全通道热态超标 → v1 走分块+流水播放（首包 &lt;3s），daemon 留触发后置。ZipVoice Node 绑定可行性成立。</p>
+  <table>
+    <tr><th>通道（Node 绑定为产品化通道）</th><th>en 短句</th><th>zh 短句</th></tr>
+    <tr><td>Kokoro v1.1 int8（通用嗓，en A 级）</td><td><audio controls preload="none" src="../research/bench/samples/sherpa-kokoro-node-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/sherpa-kokoro-node-zh-short.wav"></audio></td></tr>
+    <tr><td>ZipVoice（占位干音克隆演示，真角色嗓在 s-voice）</td><td><audio controls preload="none" src="../research/bench/samples/sherpa-zipvoice-node-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/sherpa-zipvoice-node-zh-short.wav"></audio></td></tr>
+    <tr><td>matcha-zh-baker（最快，仅中文/单女声/非商用数据集）</td><td class="dim">N/A（英文退化）</td><td><audio controls preload="none" src="../research/bench/samples/sherpa-matcha-node-zh-short.wav"></audio></td></tr>
+    <tr><td>mlx Qwen3-TTS 0.6B（中文挑战者，1.9GB）</td><td><audio controls preload="none" src="../research/bench/samples/mlx-qwen3-subprocess-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/mlx-qwen3-subprocess-zh-short.wav"></audio></td></tr>
+    <tr><td>系统 say 对照（Eddy / Tingting）</td><td><audio controls preload="none" src="../research/bench/samples/system-say-spawn-en-short.wav"></audio></td><td><audio controls preload="none" src="../research/bench/samples/system-say-spawn-zh-short.wav"></audio></td></tr>
+  </table>
+  <p style="margin:10px 0 0"><b>抉择点①（编排者推荐，可推翻）</b>：工程底座定 <b>sherpa-onnx Node 绑定</b>；默认嗓候选二选一交 s-voice 试听终裁——<b>ZipVoice 角色克隆嗓</b>（短句热 2.4-2.6s 达标）或 <b>Kokoro en 嗓</b>（1.59s 最快通用兜底）；matcha 登记为 zh 快速预设（个人使用，非商用数据集注记）；mlx-qwen3 不默认接线（体量与延迟无优势），留中文挑战位。</p>
 </div>
 <div class="panel">
   <b>角色克隆试听矩阵</b> <span class="dim">—— s-voice 完成后追加：芙莉莲 / D.Va / Lucy × en/zh，供你选默认角色嗓</span>
