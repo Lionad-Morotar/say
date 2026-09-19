@@ -51,6 +51,30 @@ describe("withStderrMuted：native 库直写 fd 2 的噪声遮罩", () => {
     expect(result.stderr).not.toContain("INSIDE-FD");
   });
 
+  it("窗口重叠时仍恢复到真正的 stderr：内层不能把 /dev/null 当成原目标装回去", () => {
+    // 分块流水的形状：合成块 i+1 与播放块 i 并行，两个遮罩窗口必然重叠。
+    // 先开的窗口先关（装回真目标），后开的窗口拿到的是 /dev/null，
+    // 它最后关闭时若把 /dev/null 装回去，此后整个进程的 stderr 都会静默丢失。
+    const script = [
+      `import { withStderrMuted } from ${JSON.stringify(MODULE)};`,
+      `import { writeSync } from "node:fs";`,
+      `const first = withStderrMuted(async () => {`,
+      `  writeSync(2, "HIDDEN-FIRST\\n");`,
+      `  await new Promise((resolve) => setTimeout(resolve, 10));`,
+      `});`,
+      `const second = withStderrMuted(async () => {`,
+      `  writeSync(2, "HIDDEN-SECOND\\n");`,
+      `  await new Promise((resolve) => setTimeout(resolve, 80));`,
+      `  writeSync(2, "HIDDEN-SECOND-TAIL\\n");`,
+      `});`,
+      `await Promise.all([first, second]);`,
+      `process.stderr.write("STILL-WORKS\\n");`,
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("STILL-WORKS\n");
+  });
+
   it("连续两次遮罩互不干扰，描述符不会越用越偏", () => {
     const script = [
       `import { withStderrMuted } from ${JSON.stringify(MODULE)};`,
