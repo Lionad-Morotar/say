@@ -23,6 +23,7 @@ export {
   type Timing,
 } from "./delivery.ts";
 export { type RunDeps } from "./deps.ts";
+export { runEngineCommand, type LabEngineStatus } from "./engines-command.ts";
 export {
   SHERPA_ENGINE,
   SYSTEM_ENGINE,

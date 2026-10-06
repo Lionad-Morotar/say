@@ -178,6 +178,27 @@ describe("配置三层优先级", () => {
     expect(args[args.indexOf("-v") + 1]).toBe("zh_baker");
   });
 
+  it("engine ls 经 run() 分派到管理子命令，不触合成链", async () => {
+    const ctx = await invoke(
+      {
+        spawnOutcome: (record) =>
+          record.cmd === process.execPath
+            ? {
+                exitCode: 0,
+                signal: null,
+                stdout: JSON.stringify({ labRoot: "/lab", engines: [] }),
+                stderr: "",
+              }
+            : { exitCode: 0, signal: null, stdout: "", stderr: "" },
+      },
+      ["engine", "ls"],
+    );
+    expect(ctx.code).toBe(0);
+    expect(ctx.stdout.join("")).toContain("sherpa");
+    // 管理子命令不向 /usr/bin/say 发起合成
+    expect(ctx.spawns.filter((s) => s.cmd === SAY)).toHaveLength(0);
+  });
+
   it("默认引擎必在注册表中，零配置调用不会因引擎缺失而失败", () => {
     const ctx = setup();
     expect(createDefaultRegistry(ctx.host).names()).toContain(DEFAULT_ENGINE);

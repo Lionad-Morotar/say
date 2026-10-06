@@ -3,6 +3,7 @@ import { parseArgv } from "./cli.ts";
 import { parseConfigFile, resolveConfig } from "./config.ts";
 import { startTiming, stagingPath, type Delivery } from "./delivery.ts";
 import type { RunDeps } from "./deps.ts";
+import { runEngineCommand } from "./engines-command.ts";
 import { routeEngine } from "./engines/index.ts";
 import { messageOf } from "./errors.ts";
 import type { Host } from "./host.ts";
@@ -72,6 +73,7 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const { host } = deps;
   const request = parseArgv(argv);
 
+  if (request.kind === "engine") return runEngineCommand(deps, request);
   if (request.kind === "passthrough") return passthrough(deps, request.argv);
   if (request.kind === "usage-error") {
     host.writeStderr(`say: ${request.message}\n`);

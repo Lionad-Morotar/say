@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
@@ -33,7 +33,11 @@ export interface Host {
   tmpDir: string;
   now(): number;
   writeStderr(text: string): void;
+  /** 面向用户的标准输出通道（engine ls/use 的清单与确认行）。合成链路不用它，保持 stdout 可管道 */
+  writeStdout(text: string): void;
   spawn(cmd: string, args: readonly string[], opts?: SpawnOpts): Promise<SpawnOutcome>;
+  /** 递归建目录（已存在即成功）。config 写入前的落点保障 */
+  mkdir(path: string): Promise<void>;
   fileExists(path: string): boolean;
   /** 目录直下条目名（仅目录），失败或不存在返回空：角色音色注册表的枚举通道 */
   listDirEntries(path: string): readonly string[];
@@ -83,6 +87,13 @@ export function createNodeHost(env: EnvMap = process.env): Host {
     now: () => Date.now(),
     writeStderr: (text) => {
       process.stderr.write(text);
+    },
+    writeStdout: (text) => {
+      process.stdout.write(text);
+    },
+    // node 的 recursive mkdir 会返回首个新建目录，接缝面把它抹成 void（调用方不消费该值）
+    mkdir: async (path) => {
+      await mkdir(path, { recursive: true });
     },
     spawn: (cmd, args, opts) => {
       const stdio = opts?.stdio ?? "capture";

@@ -121,3 +121,35 @@ describe("parseArgv：say 兼容调用面", () => {
     expect(parseArgv(["-v", "af_maple?", "hi"])).toMatchObject({ kind: "speak", voice: "af_maple?" });
   });
 });
+
+describe("engine 管理子命令解析", () => {
+  it("engine ls 是管理请求", () => {
+    expect(parseArgv(["engine", "ls"])).toEqual({ kind: "engine", action: "ls", name: null });
+  });
+
+  it("engine use 带引擎名", () => {
+    expect(parseArgv(["engine", "use", "gptsovits"])).toEqual({
+      kind: "engine",
+      action: "use",
+      name: "gptsovits",
+    });
+  });
+
+  it.each([[["engine"]], [["engine", "use"]], [["engine", "use", "--bogus"]]])(
+    "engine 裸词与 use 缺名/名以 - 开头是用法错误：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "usage-error" });
+    },
+  );
+
+  it("engine 后跟其他词整句回落文本合成，shadow 兼容承诺不因管理面收窄", () => {
+    expect(parseArgv(["engine", "is", "loud"])).toMatchObject({
+      kind: "speak",
+      texts: ["engine", "is", "loud"],
+    });
+    expect(parseArgv(["hello", "engine", "ls"])).toMatchObject({
+      kind: "speak",
+      texts: ["hello", "engine", "ls"],
+    });
+  });
+});
