@@ -99,6 +99,8 @@ export interface FlagOverrides {
   rateWpm?: number | null;
   /** 自研 flag，不走 macOS say 透传 */
   preset?: string | null;
+  /** 自研 flag：逐次调用的引擎切换，层级在 SAY_ENGINE 与 config 之上 */
+  engine?: string | null;
 }
 
 export type FallbackPolicy = "system" | "off";

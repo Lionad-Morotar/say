@@ -11,6 +11,7 @@ describe("parseArgv：say 兼容调用面", () => {
       rateWpm: null,
       output: null,
       preset: null,
+      engine: null,
     });
   });
 
@@ -62,7 +63,7 @@ describe("parseArgv：say 兼容调用面", () => {
     });
   });
 
-  it.each(["-v", "-r", "-o", "-f", "--voice", "--rate", "--output-file", "--input-file"])(
+  it.each(["-v", "-r", "-o", "-f", "--voice", "--rate", "--output-file", "--input-file", "--engine"])(
     "受支持 flag 缺值是用法错误：%s",
     (flag) => {
       expect(parseArgv([flag])).toMatchObject({ kind: "usage-error" });
@@ -91,6 +92,13 @@ describe("parseArgv：say 兼容调用面", () => {
     "--preset 是本工具的自研 flag，不走透传：%j",
     (argv) => {
       expect(parseArgv(argv)).toMatchObject({ kind: "speak", preset: "calm" });
+    },
+  );
+
+  it.each([[["--engine", "gptsovits", "hi"]], [["--engine=gptsovits", "hi"]]])(
+    "--engine 是本工具的自研 flag，不走透传：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "speak", engine: "gptsovits" });
     },
   );
 

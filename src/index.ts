@@ -5,7 +5,14 @@ import { run } from "./speak.ts";
 import type { RunDeps } from "./deps.ts";
 
 export { parseArgv, type CliRequest } from "./cli.ts";
-export { DEFAULT_ENGINE, DEFAULT_RATE_WPM, parseConfigFile, resolveConfig } from "./config.ts";
+export {
+  DEFAULT_ENGINE,
+  DEFAULT_LOCALE,
+  DEFAULT_RATE_WPM,
+  DEFAULT_VOICE_KEY,
+  parseConfigFile,
+  resolveConfig,
+} from "./config.ts";
 export {
   deliver,
   deliverAndExit,
@@ -47,6 +54,7 @@ export { resolvePaths } from "./paths.ts";
 export { speakChunked, speakOnce, type SpeakContext } from "./pipeline.ts";
 export { AFPLAY_BIN, playFile } from "./player.ts";
 export { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, fail, writeDebug, type Outcome } from "./report.ts";
+export { detectLocale, type LocaleLang } from "./locale.ts";
 export { run } from "./speak.ts";
 export { withStderrMuted } from "./stderr.ts";
 export type * from "./types.ts";

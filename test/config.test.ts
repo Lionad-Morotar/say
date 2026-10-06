@@ -125,4 +125,100 @@ describe("resolveConfig：flag > env > config > 默认", () => {
       expect(warnings).toHaveLength(0);
     });
   });
+
+  describe("--engine flag：v2 引擎切换面（flag > env > config）", () => {
+    it("三层各设不同值时 flag 胜", () => {
+      const { config } = resolveConfig({
+        env: { SAY_ENGINE: "zipvoice" },
+        file: { engine: "system" },
+        flags: { engine: "gptsovits" },
+      });
+      expect(config.engine).toBe("gptsovits");
+    });
+
+    it("env 胜 config，flag 缺席不改变层序", () => {
+      const { config } = resolveConfig({
+        env: { SAY_ENGINE: "zipvoice" },
+        file: { engine: "system" },
+        flags: {},
+      });
+      expect(config.engine).toBe("zipvoice");
+    });
+
+    it("flag 只覆盖自己出现过的维度：有 --engine 时 voice/rate 仍由 env 决定", () => {
+      const { config } = resolveConfig({
+        env: { SAY_VOICE: "af_sol", SAY_SPEED: "220" },
+        file: null,
+        flags: { engine: "system" },
+      });
+      expect(config).toMatchObject({ engine: "system", voice: "af_sol", rateWpm: 220 });
+    });
+  });
+
+  describe("voice=default 关键字：按 locale 落 en/zh 内置预设", () => {
+    it("locale=zh 落 zh 预设（zh_baker）", () => {
+      const { config, warnings } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
+      expect(config.voice).toBe("zh_baker");
+      expect(warnings).toHaveLength(0);
+    });
+
+    it("locale=en 落 en 预设（af_maple）", () => {
+      const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "en" });
+      expect(config.voice).toBe("af_maple");
+    });
+
+    it("locale 未传落缺省 en（编排层未探测时的安全落点）", () => {
+      const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" } });
+      expect(config.voice).toBe("af_maple");
+    });
+
+    it("关键字来自 env 或 config 同样解析，显式层压过预设层不变", () => {
+      expect(resolveConfig({ env: { SAY_VOICE: "default" }, file: null, flags: {}, locale: "zh" }).config.voice).toBe("zh_baker");
+      expect(resolveConfig({ env: {}, file: { voice: "default" }, flags: {}, locale: "zh" }).config.voice).toBe("zh_baker");
+    });
+
+    it("default 落的预设是最低层：显式 --engine 与 -v 仍胜出", () => {
+      const { config } = resolveConfig({
+        env: {},
+        file: null,
+        flags: { voice: "default", engine: "zipvoice" },
+        locale: "zh",
+      });
+      expect(config).toMatchObject({ voice: "zh_baker", engine: "zipvoice" });
+    });
+
+    it("config engine 未设时 default 预设的 engine 生效（当前内置表即 sherpa）", () => {
+      const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
+      expect(config.engine).toBe("sherpa");
+    });
+
+    it("config voice=default 是显式层，压过更低层的预设 voice（config > preset 层序不变）", () => {
+      const { config } = resolveConfig({
+        env: { SAY_PRESET: "calm" },
+        file: { voice: "default", presets: { calm: { voice: "bf_vale" } } },
+        flags: {},
+        locale: "zh",
+      });
+      expect(config.voice).toBe("zh_baker");
+    });
+
+    it("关键字也能从预设层给出：preset voice=default × locale 落对应预设", () => {
+      const { config } = resolveConfig({
+        env: { SAY_PRESET: "calm" },
+        file: { presets: { calm: { voice: "default" } } },
+        flags: {},
+        locale: "zh",
+      });
+      expect(config.voice).toBe("zh_baker");
+    });
+
+    it("frieren/dva 是角色嗓名字，config 层原样透传不解析", () => {
+      expect(resolveConfig({ env: {}, file: { voice: "frieren" }, flags: {} }).config.voice).toBe("frieren");
+      expect(resolveConfig({ env: { SAY_VOICE: "dva" }, file: null, flags: {} }).config.voice).toBe("dva");
+    });
+
+    it("未设 voice 维持引擎默认嗓语义（null），v1 零配置行为不变", () => {
+      expect(resolveConfig({ env: {}, file: null, flags: {}, locale: "zh" }).config.voice).toBeNull();
+    });
+  });
 });

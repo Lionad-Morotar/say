@@ -14,15 +14,17 @@ export type CliRequest =
       rateWpm: number | null;
       output: string | null;
       preset: string | null;
+      /** 自研 flag：逐次调用指定引擎，优先级高于 SAY_ENGINE 与 config（engine-v2 切换面） */
+      engine: string | null;
     }
   | { kind: "passthrough"; argv: string[] }
   | { kind: "usage-error"; message: string };
 
-type CanonicalFlag = "voice" | "rate" | "output" | "input" | "preset";
+type CanonicalFlag = "voice" | "rate" | "output" | "input" | "preset" | "engine";
 
 /**
- * 受支持面 = man say 里本 shim 自己实现的选项，外加自研的 --preset（预设选择）。
- * 不在此表的选项一律整条透传，
+ * 受支持面 = man say 里本 shim 自己实现的选项，外加自研的 --preset（预设选择）
+ * 与 --engine（引擎切换）。不在此表的选项一律整条透传，
  * 长尾（-a/-n/--progress/--interactive/音频格式族）由 /usr/bin/say 兜住，
  * 兼容面因此是「say 的子集 + 其余原样转交」而不是逐项复刻。
  */
@@ -36,6 +38,7 @@ const SUPPORTED_FLAGS: ReadonlyMap<string, CanonicalFlag> = new Map<string, Cano
   ["-f", "input"],
   ["--input-file", "input"],
   ["--preset", "preset"],
+  ["--engine", "engine"],
 ]);
 
 /** 负数与 `-` 开头的正文（如 "-1 tests failed"）会被当成选项名，落到透传分支由系统 say 处理 */
@@ -55,6 +58,7 @@ export function parseArgv(argv: readonly string[]): CliRequest {
   let rateWpm: number | null = null;
   let output: string | null = null;
   let preset: string | null = null;
+  let engine: string | null = null;
   let flagsEnded = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -101,6 +105,8 @@ export function parseArgv(argv: readonly string[]): CliRequest {
       inputFile = value;
     } else if (canonical === "preset") {
       preset = value;
+    } else if (canonical === "engine") {
+      engine = value;
     } else {
       const rate = parseRate(value);
       if (rate === null) {
@@ -110,5 +116,5 @@ export function parseArgv(argv: readonly string[]): CliRequest {
     }
   }
 
-  return { kind: "speak", texts, inputFile, voice, rateWpm, output, preset };
+  return { kind: "speak", texts, inputFile, voice, rateWpm, output, preset, engine };
 }
