@@ -3,9 +3,11 @@ import { parseArgv } from "./cli.ts";
 import { parseConfigFile, resolveConfig } from "./config.ts";
 import { startTiming, stagingPath, type Delivery } from "./delivery.ts";
 import type { RunDeps } from "./deps.ts";
+import { runEngineCommand } from "./engines-command.ts";
 import { routeEngine } from "./engines/index.ts";
 import { messageOf } from "./errors.ts";
 import type { Host } from "./host.ts";
+import { detectLocale } from "./locale.ts";
 import { chunkText, normalizeText } from "./normalize.ts";
 import { speakChunked, speakOnce, type SpeakContext } from "./pipeline.ts";
 import { EXIT_OK, EXIT_USAGE, fail, writeDebug } from "./report.ts";
@@ -71,6 +73,7 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const { host } = deps;
   const request = parseArgv(argv);
 
+  if (request.kind === "engine") return runEngineCommand(deps, request);
   if (request.kind === "passthrough") return passthrough(deps, request.argv);
   if (request.kind === "usage-error") {
     host.writeStderr(`say: ${request.message}\n`);
@@ -86,11 +89,13 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const loaded = await loadConfigFile(host, deps.paths.configFile);
   for (const warning of loaded.warnings) host.writeStderr(`say: ${warning}\n`);
 
-  const resolution = resolveConfig({
-    env: host.env,
-    file: loaded.file,
-    flags: { voice: request.voice, rateWpm: request.rateWpm, preset: request.preset },
-  });
+  // 两段解析：第一段不带 locale 判定关键字是否在场（含预设层），在场才付 locale 探测的子进程成本并重解析。
+  // 门控取自解析器自身的 needsLocale 而非调用方扫描层源——后者与解析器是两份真源，必然漂移
+  const flags = { voice: request.voice, rateWpm: request.rateWpm, preset: request.preset, engine: request.engine };
+  let resolution = resolveConfig({ env: host.env, file: loaded.file, flags });
+  if (resolution.needsLocale) {
+    resolution = resolveConfig({ env: host.env, file: loaded.file, flags, locale: await detectLocale(host) });
+  }
   for (const warning of resolution.warnings) host.writeStderr(`say: ${warning}\n`);
   const config = resolution.config;
 

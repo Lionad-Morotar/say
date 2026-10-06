@@ -33,6 +33,8 @@ export function createFakeHost(options: FakeHostOptions = {}) {
   const removes: string[] = [];
   const spawns: SpawnRecord[] = [];
   const stderr: string[] = [];
+  const stdout: string[] = [];
+  const mkdirs: string[] = [];
   const defaultExit = options.exitCode ?? 0;
 
   const host: Host = {
@@ -42,6 +44,12 @@ export function createFakeHost(options: FakeHostOptions = {}) {
     now: options.now ?? (() => 0),
     writeStderr: (text) => {
       stderr.push(text);
+    },
+    writeStdout: (text) => {
+      stdout.push(text);
+    },
+    mkdir: async (path) => {
+      mkdirs.push(path);
     },
     spawn: async (cmd: string, args: readonly string[], spawnOpts?: SpawnOpts) => {
       const record: SpawnRecord = { cmd, args: [...args], stdin: spawnOpts?.stdin };
@@ -82,5 +90,5 @@ export function createFakeHost(options: FakeHostOptions = {}) {
     },
   };
 
-  return { host, spawns, stderr, renames, writes, removes, files };
+  return { host, spawns, stderr, stdout, mkdirs, renames, writes, removes, files };
 }

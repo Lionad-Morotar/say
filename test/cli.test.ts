@@ -11,6 +11,7 @@ describe("parseArgv：say 兼容调用面", () => {
       rateWpm: null,
       output: null,
       preset: null,
+      engine: null,
     });
   });
 
@@ -62,7 +63,7 @@ describe("parseArgv：say 兼容调用面", () => {
     });
   });
 
-  it.each(["-v", "-r", "-o", "-f", "--voice", "--rate", "--output-file", "--input-file"])(
+  it.each(["-v", "-r", "-o", "-f", "--voice", "--rate", "--output-file", "--input-file", "--engine"])(
     "受支持 flag 缺值是用法错误：%s",
     (flag) => {
       expect(parseArgv([flag])).toMatchObject({ kind: "usage-error" });
@@ -94,6 +95,13 @@ describe("parseArgv：say 兼容调用面", () => {
     },
   );
 
+  it.each([[["--engine", "gptsovits", "hi"]], [["--engine=gptsovits", "hi"]]])(
+    "--engine 是本工具的自研 flag，不走透传：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "speak", engine: "gptsovits" });
+    },
+  );
+
   it("透传判定优先于受支持 flag 的解析错误", () => {
     expect(parseArgv(["--progress", "-v"])).toEqual({
       kind: "passthrough",
@@ -111,5 +119,44 @@ describe("parseArgv：say 兼容调用面", () => {
   it("音色值只是以 ? 开头或结尾时仍按普通音色名处理", () => {
     expect(parseArgv(["-v", "?af_maple", "hi"])).toMatchObject({ kind: "speak", voice: "?af_maple" });
     expect(parseArgv(["-v", "af_maple?", "hi"])).toMatchObject({ kind: "speak", voice: "af_maple?" });
+  });
+});
+
+describe("engine 管理子命令解析", () => {
+  it("engine ls 是管理请求", () => {
+    expect(parseArgv(["engine", "ls"])).toEqual({ kind: "engine", action: "ls", name: null });
+  });
+
+  it("engine use 带引擎名", () => {
+    expect(parseArgv(["engine", "use", "gptsovits"])).toEqual({
+      kind: "engine",
+      action: "use",
+      name: "gptsovits",
+    });
+  });
+
+  it.each([[["engine"]], [["engine", "use"]], [["engine", "use", "--bogus"]]])(
+    "engine 裸词与 use 缺名/名以 - 开头是用法错误：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "usage-error" });
+    },
+  );
+
+  it.each([[["engine", "ls", "now"]], [["engine", "use", "sherpa", "please"]]])(
+    "识别出管理动词但带多余参数吵闹报错，不静默吞词：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "usage-error" });
+    },
+  );
+
+  it("engine 后跟其他词整句回落文本合成，shadow 兼容承诺不因管理面收窄", () => {
+    expect(parseArgv(["engine", "is", "loud"])).toMatchObject({
+      kind: "speak",
+      texts: ["engine", "is", "loud"],
+    });
+    expect(parseArgv(["hello", "engine", "ls"])).toMatchObject({
+      kind: "speak",
+      texts: ["hello", "engine", "ls"],
+    });
   });
 });

@@ -99,6 +99,8 @@ export interface FlagOverrides {
   rateWpm?: number | null;
   /** 自研 flag，不走 macOS say 透传 */
   preset?: string | null;
+  /** 自研 flag：逐次调用的引擎切换，层级在 SAY_ENGINE 与 config 之上 */
+  engine?: string | null;
 }
 
 export type FallbackPolicy = "system" | "off";
@@ -115,4 +117,10 @@ export interface ConfigResolution {
   config: ResolvedConfig;
   /** 环境层坏值的降级说明。返回而非直接打印，保持解析纯函数可测 */
   warnings: string[];
+  /**
+   * 胜出 voice 是 "default" 关键字且调用方未传 locale。门控即解析器：
+   * 调用方据此决定是否做 locale 探测，探测后用真实 locale 重解析一遍——
+   * 关键字可能来自任意层（含预设），调用方自己扫描层源必然与解析器漂移。
+   */
+  needsLocale: boolean;
 }

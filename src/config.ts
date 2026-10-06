@@ -1,5 +1,6 @@
 import { parse as parseToml } from "smol-toml";
 import { messageOf } from "./errors.ts";
+import type { LocaleLang } from "./locale.ts";
 import type {
   ConfigFile,
   ConfigResolution,
@@ -12,6 +13,15 @@ import type {
 /** 默认引擎必须指向已登记的引擎，否则零配置调用会直接失败而不是出声 */
 export const DEFAULT_ENGINE = "sherpa";
 export const DEFAULT_FALLBACK: FallbackPolicy = "system";
+
+/** locale 探测的缺省落点（map 裁决「缺省 en」） */
+export const DEFAULT_LOCALE: LocaleLang = "en";
+
+/**
+ * v2 一期 voice 关键字：按 locale 落 en/zh 内置预设。
+ * frieren/dva 不在此层处理——它们是角色嗓，由引擎的 ownsVoice 认领，config 只透传名字。
+ */
+export const DEFAULT_VOICE_KEY = "default";
 
 /**
  * 175 是本机实测的 macOS say 默认语速：同一文本 `say` 与 `say -r 175` 产出时长逐位相同（3.664354s）。
@@ -131,11 +141,15 @@ function pickFallback(layers: readonly Layer[], warnings: string[]): FallbackPol
  * 预设选择与预设值的层序各自独立：
  * 选哪条预设按 flag > env > config；预设里的 voice/speed/engine 是最低一档显式层，
  * 手动指定的维度永远胜过预设值——预设是「一套默认组合」，不是更高优先级的覆盖。
+ *
+ * locale 参数只在 voice="default" 关键字生效时被消费（选 en/zh 内置预设），
+ * 非关键字路径下传与不传无语义差，调用方可据此省掉 locale 探测的子进程成本。
  */
 export function resolveConfig(input: {
   env: EnvMap;
   file: ConfigFile | null;
   flags: FlagOverrides;
+  locale?: LocaleLang;
 }): ConfigResolution {
   const warnings: string[] = [];
   const { env, flags } = input;
@@ -163,26 +177,43 @@ export function resolveConfig(input: {
     value: preset?.[field],
   });
 
+  const voice = pickString(
+    [
+      { label: "-v", value: flags.voice },
+      { label: "SAY_VOICE", value: env.SAY_VOICE },
+      { label: "config voice", value: file.voice },
+      presetLayer("voice"),
+    ],
+    null,
+    warnings,
+  );
+
+  // voice="default" 关键字按 locale 落内置预设：voice 直接换成预设值，
+  // 预设的 engine 追加在显式 preset 层之后（locale 默认预设是最低一档，显式 preset 更具体）。
+  // 胜出层是 "default" 才解析——其他层给的普通音色名不被关键字波及。
+  const engineLayers: Layer[] = [
+    { label: "--engine", value: flags.engine },
+    { label: "SAY_ENGINE", value: env.SAY_ENGINE },
+    { label: "config engine", value: file.engine },
+    presetLayer("engine"),
+  ];
+  let resolvedVoice = voice;
+  // 门控即解析器：needsLocale 只看胜出层是否命中关键字，调用方无须（也不应）自行扫描层源
+  const needsLocale = voice === DEFAULT_VOICE_KEY && input.locale === undefined;
+  if (voice === DEFAULT_VOICE_KEY) {
+    const localeKey = input.locale ?? DEFAULT_LOCALE;
+    const localePreset = BUILTIN_PRESETS[localeKey] ?? null;
+    if (localePreset === null) {
+      warnings.push(`locale "${localeKey}" 没有内置预设，按引擎默认嗓继续`);
+    } else {
+      resolvedVoice = typeof localePreset.voice === "string" ? localePreset.voice : null;
+      engineLayers.push({ label: `locale ${localeKey}`, value: localePreset.engine });
+    }
+  }
+
   const config: ResolvedConfig = {
-    engine: pickString(
-      [
-        { label: "SAY_ENGINE", value: env.SAY_ENGINE },
-        { label: "config engine", value: file.engine },
-        presetLayer("engine"),
-      ],
-      DEFAULT_ENGINE,
-      warnings,
-    ) ?? DEFAULT_ENGINE,
-    voice: pickString(
-      [
-        { label: "-v", value: flags.voice },
-        { label: "SAY_VOICE", value: env.SAY_VOICE },
-        { label: "config voice", value: file.voice },
-        presetLayer("voice"),
-      ],
-      null,
-      warnings,
-    ),
+    engine: pickString(engineLayers, DEFAULT_ENGINE, warnings) ?? DEFAULT_ENGINE,
+    voice: resolvedVoice,
     rateWpm: pickRate(
       [
         { label: "-r", value: flags.rateWpm },
@@ -202,5 +233,5 @@ export function resolveConfig(input: {
     debug: env.SAY_DEBUG === "1",
   };
 
-  return { config, warnings };
+  return { config, warnings, needsLocale };
 }

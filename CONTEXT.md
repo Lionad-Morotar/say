@@ -12,6 +12,7 @@
 | 音色（voice） | 引擎内登记的嗓音标识（如 `af_maple`、`zh_baker`） | speaker（zipvoice 域另有所指）、model |
 | 角色（character） | zipvoice 零样本克隆嗓：一个参考音频目录即一个可 `-v` 的嗓音 | persona |
 | 预设（preset） | 启动参数组（voice/engine/speed），三层配置中最低一档显式层，手动指定永远胜出 | profile、theme |
+| 默认嗓关键字（default） | v2 voice 枚举关键字：`voice = "default"` 按系统 locale（AppleLanguages 优先、LANG 兜底、缺省 en）落 en/zh 内置预设；frieren/dva 是平行的角色嗓枚举值 | auto、none |
 | shadow | 经 `~/.local/bin/say` 符号链接在 PATH 上接管系统 say 的机制 | hijack、override |
 | 流水（streaming） | 长文按句边界分块：播块 i 时合成块 i+1，首包出声先于整段完成 | chunked playback |
 | 引擎三态 | sherpa（神经多语）/ zipvoice（角色克隆）/ system（回退与透传目标）三执行后端 | provider |
