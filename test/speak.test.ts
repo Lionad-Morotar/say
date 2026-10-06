@@ -162,6 +162,22 @@ describe("配置三层优先级", () => {
     expect(args[args.indexOf("-v") + 1]).toBe("Eddy");
   });
 
+  it("voice=default 关键字藏在预设层也按探测 locale 落预设，接线层不漏判", async () => {
+    const { spawns } = await invoke(
+      {
+        env: { SAY_ENGINE: "system", SAY_PRESET: "calm" },
+        files: { [CONFIG]: '[presets.calm]\nvoice = "default"\n' },
+        spawnOutcome: (record) =>
+          record.cmd === "/usr/bin/defaults"
+            ? { exitCode: 0, signal: null, stdout: '(\n    "zh-Hans-CN",\n    "en-US"\n)\n', stderr: "" }
+            : { exitCode: 0, signal: null, stdout: "", stderr: "" },
+      },
+      ["hi"],
+    );
+    const args = spawns.find((s) => s.cmd === "/usr/bin/say")?.args ?? [];
+    expect(args[args.indexOf("-v") + 1]).toBe("zh_baker");
+  });
+
   it("默认引擎必在注册表中，零配置调用不会因引擎缺失而失败", () => {
     const ctx = setup();
     expect(createDefaultRegistry(ctx.host).names()).toContain(DEFAULT_ENGINE);

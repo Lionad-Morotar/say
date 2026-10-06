@@ -26,12 +26,15 @@ export async function detectLocale(host: Host): Promise<LocaleLang> {
  * 从 locale 原料取主子标签。两种形态都认：
  * defaults 的 plist 输出（`(\n    "zh-Hans-CN",\n …)`，取首个引号条目）与
  * LANG 环境变量（`zh_CN.UTF-8`，点号分隔编码、下划线分隔地区）。
- * 空串返回 null 让调用方落缺省，非 zh 的主标签一律 en。
+ * 无引号条目的包裹括号要剥掉（defaults 对无特殊字符的值不加引号，`(zh)` 是合法输出）；
+ * 剥后为空（如空数组 `()`）返回 null 让调用方落 LANG 兜底，非 zh 的主标签一律 en。
  */
 function primaryLang(raw: string): LocaleLang | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
-  const token = trimmed.match(/"([^"]+)"/)?.[1] ?? trimmed;
+  const quoted = trimmed.match(/"([^"]+)"/)?.[1];
+  const token = (quoted ?? trimmed).replace(/^[()]+|[()]+$/g, "").trim();
+  if (token.length === 0) return null;
   const primary = token
     .split(/[.\s]/)[0]
     ?.split(/[-_]/)[0]

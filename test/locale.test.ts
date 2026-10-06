@@ -57,6 +57,22 @@ describe("detectLocale：AppleLanguages 优先、LANG 兜底、缺省 en", () =>
     await expect(detectLocale(host)).resolves.toBe("en");
   });
 
+  it("无引号 plist 条目剥包裹括号后识别（defaults 对无特殊字符的值不加引号）", async () => {
+    const { host } = createFakeHost({
+      env: { LANG: "en_US.UTF-8" },
+      spawnOutcome: outcomes("(\n    zh\n)\n"),
+    });
+    await expect(detectLocale(host)).resolves.toBe("zh");
+  });
+
+  it("AppleLanguages 空数组 () 返回 null 而非误判，LANG 兜底不被吞掉", async () => {
+    const { host } = createFakeHost({
+      env: { LANG: "zh_CN.UTF-8" },
+      spawnOutcome: outcomes("()\n"),
+    });
+    await expect(detectLocale(host)).resolves.toBe("zh");
+  });
+
   it("LANG 为空串视同未设，落缺省 en", async () => {
     const { host } = createFakeHost({ env: { LANG: "" }, spawnOutcome: outcomes("", 1) });
     await expect(detectLocale(host)).resolves.toBe("en");

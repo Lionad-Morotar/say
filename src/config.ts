@@ -198,6 +198,8 @@ export function resolveConfig(input: {
     presetLayer("engine"),
   ];
   let resolvedVoice = voice;
+  // 门控即解析器：needsLocale 只看胜出层是否命中关键字，调用方无须（也不应）自行扫描层源
+  const needsLocale = voice === DEFAULT_VOICE_KEY && input.locale === undefined;
   if (voice === DEFAULT_VOICE_KEY) {
     const localeKey = input.locale ?? DEFAULT_LOCALE;
     const localePreset = BUILTIN_PRESETS[localeKey] ?? null;
@@ -231,5 +233,5 @@ export function resolveConfig(input: {
     debug: env.SAY_DEBUG === "1",
   };
 
-  return { config, warnings };
+  return { config, warnings, needsLocale };
 }

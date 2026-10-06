@@ -87,18 +87,13 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const loaded = await loadConfigFile(host, deps.paths.configFile);
   for (const warning of loaded.warnings) host.writeStderr(`say: ${warning}\n`);
 
-  // locale 探测是一次 defaults 子进程（~50ms），只在 voice="default" 关键字在场时才付这个成本；
-  // 探测范围限于三个显式层，预设里藏 default 关键字的角落按缺省 en 落（一期近似）
-  const needsLocale =
-    request.voice === "default" || host.env.SAY_VOICE === "default" || loaded.file?.voice === "default";
-  const locale = needsLocale ? await detectLocale(host) : "en";
-
-  const resolution = resolveConfig({
-    env: host.env,
-    file: loaded.file,
-    flags: { voice: request.voice, rateWpm: request.rateWpm, preset: request.preset, engine: request.engine },
-    locale,
-  });
+  // 两段解析：第一段不带 locale 判定关键字是否在场（含预设层），在场才付 locale 探测的子进程成本并重解析。
+  // 门控取自解析器自身的 needsLocale 而非调用方扫描层源——后者与解析器是两份真源，必然漂移
+  const flags = { voice: request.voice, rateWpm: request.rateWpm, preset: request.preset, engine: request.engine };
+  let resolution = resolveConfig({ env: host.env, file: loaded.file, flags });
+  if (resolution.needsLocale) {
+    resolution = resolveConfig({ env: host.env, file: loaded.file, flags, locale: await detectLocale(host) });
+  }
   for (const warning of resolution.warnings) host.writeStderr(`say: ${warning}\n`);
   const config = resolution.config;
 

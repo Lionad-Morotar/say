@@ -220,5 +220,21 @@ describe("resolveConfig：flag > env > config > 默认", () => {
     it("未设 voice 维持引擎默认嗓语义（null），v1 零配置行为不变", () => {
       expect(resolveConfig({ env: {}, file: null, flags: {}, locale: "zh" }).config.voice).toBeNull();
     });
+
+    it("needsLocale 门控即解析器：关键字命中且 locale 未传才为 true，覆盖全部层源", () => {
+      // flag 层
+      expect(resolveConfig({ env: {}, file: null, flags: { voice: "default" } }).needsLocale).toBe(true);
+      // 预设层（接线层扫描必然漏掉、只有解析器自己能判定的形态）
+      expect(
+        resolveConfig({
+          env: { SAY_PRESET: "calm" },
+          file: { presets: { calm: { voice: "default" } } },
+          flags: {},
+        }).needsLocale,
+      ).toBe(true);
+      // locale 已传或非关键字一律 false
+      expect(resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" }).needsLocale).toBe(false);
+      expect(resolveConfig({ env: {}, file: { voice: "frieren" }, flags: {} }).needsLocale).toBe(false);
+    });
   });
 });
