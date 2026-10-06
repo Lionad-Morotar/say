@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
 import type { SpawnOutcome } from "../src/host.ts";
 import { parseConfigFile } from "../src/config.ts";
-import { runEngineCommand } from "../src/engines-command.ts";
+import { INSTALL_ENGINE_SCRIPT, runEngineCommand } from "../src/engines-command.ts";
 import { createDefaultRegistry } from "../src/engines/index.ts";
 import { EXIT_FAILURE, EXIT_USAGE } from "../src/report.ts";
 import { resolvePaths } from "../src/paths.ts";
@@ -61,6 +62,12 @@ function writtenContent(fake: ReturnType<typeof setup>): string {
 }
 
 describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
+  it("安装器脚本路径解析到仓内真实文件（相对 URL 从模块文件起算，fake host 测不到的布局假设在此钉住）", () => {
+    expect(existsSync(INSTALL_ENGINE_SCRIPT)).toBe(true);
+    expect(INSTALL_ENGINE_SCRIPT).toContain("scripts/install-engine.mjs");
+    expect(INSTALL_ENGINE_SCRIPT).not.toContain(".claude/scripts");
+  });
+
   it("列出三个内置引擎与 lab 引擎及安装状态", async () => {
     const fake = setup();
     const code = await runEngineCommand(fake.deps, { kind: "engine", action: "ls", name: null });

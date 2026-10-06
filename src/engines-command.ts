@@ -25,8 +25,8 @@ function isLabEngineStatus(entry: unknown): entry is LabEngineStatus {
   );
 }
 
-/** 安装器脚本按仓库布局定位：src 内模块上跳两级即仓根 scripts/，bin/say 符号链接经 Node realpath 解析后同样成立 */
-const INSTALL_ENGINE_SCRIPT = fileURLToPath(new URL("../../scripts/install-engine.mjs", import.meta.url));
+/** 安装器脚本按仓库布局定位：src 内模块相对自身文件上跳一级即仓根 scripts/，bin/say 符号链接经 Node realpath 解析后同样成立 */
+export const INSTALL_ENGINE_SCRIPT = fileURLToPath(new URL("../scripts/install-engine.mjs", import.meta.url));
 
 /**
  * say-lab 四引擎安装状态经 install-engine status --json 查询（S1 钉定的权威面），
