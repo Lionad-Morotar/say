@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SpawnOutcome } from "../src/host.ts";
+import { parseConfigFile } from "../src/config.ts";
 import { runEngineCommand } from "../src/engines-command.ts";
 import { createDefaultRegistry } from "../src/engines/index.ts";
 import { EXIT_FAILURE, EXIT_USAGE } from "../src/report.ts";
@@ -98,6 +99,30 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     expect(out).not.toContain("gptsovits");
     expect(fake.stderr.join("")).toContain("安装状态查询失败");
   });
+
+  it("SAY_ENGINE 环境覆盖反映在 * 标记上（env 层压 config 层）", async () => {
+    const fake = setup({ env: { SAY_ENGINE: "zipvoice" }, files: { [CONFIG]: 'engine = "system"\n' } });
+    await runEngineCommand(fake.deps, { kind: "engine", action: "ls", name: null });
+    expect(stdoutOf(fake)).toMatch(/^\* zipvoice/m);
+  });
+
+  it("lab 状态值漂移（非三态白名单）整响应判为查询失败，降级不放行脏条目", async () => {
+    const drifted = JSON.stringify({
+      labRoot: "/lab",
+      engines: [{ engine: "gptsovits", status: "degraded", venv: "ok", missing: [], autoPending: [], patchStatus: null }],
+    });
+    const fake = setup({
+      spawnOutcome: (record) =>
+        record.cmd === NODE_BIN
+          ? { exitCode: 0, signal: null, stdout: drifted, stderr: "" }
+          : { exitCode: 0, signal: null, stdout: "", stderr: "" },
+    });
+    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "ls", name: null });
+    expect(code).toBe(0);
+    expect(stdoutOf(fake)).not.toContain("lab:degraded");
+    expect(stdoutOf(fake)).not.toContain("gptsovits");
+    expect(fake.stderr.join("")).toContain("安装状态查询失败");
+  });
 });
 
 describe("engine use：行级手术写 config 默认引擎", () => {
@@ -151,5 +176,14 @@ describe("engine use：行级手术写 config 默认引擎", () => {
     expect(code).toBe(EXIT_FAILURE);
     expect(fake.renames).toHaveLength(0);
     expect(fake.stderr.join("")).toContain("拒绝写入");
+  });
+
+  it("引号包裹的顶层键（\"engine\" = \"x\"）同样被原位替换，不产生重复键", async () => {
+    const fake = setup({ files: { [CONFIG]: '"engine" = "system"\nvoice = "af_sol"\n' } });
+    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "zipvoice" });
+    expect(code).toBe(0);
+    expect(writtenContent(fake)).toBe('engine = "zipvoice"\nvoice = "af_sol"\n');
+    // 原子改名的目标内容只有一处顶层 engine 键，写回后可被 TOML 解析（重复键会抛错）
+    expect(parseConfigFile(writtenContent(fake))).toMatchObject({ ok: true });
   });
 });

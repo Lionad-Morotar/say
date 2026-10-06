@@ -54,18 +54,21 @@ function parseRate(raw: string): number | null {
 }
 
 export function parseArgv(argv: readonly string[]): CliRequest {
-  // 引擎管理子命令只认精确二词形态（engine ls / engine use <name>）：
-  // 裸 `engine` 一词给用法错误（单独朗读一个词的调用没有意义，管理面是蓝图钉定形态），
-  // engine 后跟其他词（`say engine is loud`）整句回落文本合成，shadow 兼容承诺不因管理面收窄
-  const [head, second, third] = argv;
+  // 引擎管理子命令只认精确形态（engine ls / engine use <name>）：
+  // 识别出管理动词但形态不齐（多余词、缺名、flag 形名）吵闹报用法错误，静默吞词比报错更背离 shadow 兼容承诺；
+  // engine 后跟其他词（`say engine is loud`）整句回落文本合成，朗读面不因管理面收窄
+  const [head, second, third, fourth] = argv;
   if (head === "engine") {
     if (second === undefined) {
       return { kind: "usage-error", message: "engine 需要子命令：say engine ls 或 say engine use <name>" };
     }
-    if (second === "ls") return { kind: "engine", action: "ls", name: null };
+    if (second === "ls") {
+      if (third !== undefined) return { kind: "usage-error", message: "engine ls 不接受额外参数" };
+      return { kind: "engine", action: "ls", name: null };
+    }
     if (second === "use") {
-      if (third === undefined || third.startsWith("-")) {
-        return { kind: "usage-error", message: "engine use 需要引擎名：say engine use <name>" };
+      if (third === undefined || third.startsWith("-") || fourth !== undefined) {
+        return { kind: "usage-error", message: "engine use 需要恰好一个引擎名：say engine use <name>" };
       }
       return { kind: "engine", action: "use", name: third };
     }

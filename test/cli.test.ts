@@ -142,6 +142,13 @@ describe("engine 管理子命令解析", () => {
     },
   );
 
+  it.each([[["engine", "ls", "now"]], [["engine", "use", "sherpa", "please"]]])(
+    "识别出管理动词但带多余参数吵闹报错，不静默吞词：%j",
+    (argv) => {
+      expect(parseArgv(argv)).toMatchObject({ kind: "usage-error" });
+    },
+  );
+
   it("engine 后跟其他词整句回落文本合成，shadow 兼容承诺不因管理面收窄", () => {
     expect(parseArgv(["engine", "is", "loud"])).toMatchObject({
       kind: "speak",

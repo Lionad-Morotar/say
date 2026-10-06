@@ -12,6 +12,19 @@ export interface LabEngineStatus {
   status: "ready" | "partial" | "missing";
 }
 
+/**
+ * 状态值按 S1 契约钉三态白名单：S1 侧漂移（新状态值、键拼错）在此判为查询失败走降级，
+ * 不放行成 lab:<未知态> 让消费方的三态分支踩空。
+ */
+function isLabEngineStatus(entry: unknown): entry is LabEngineStatus {
+  if (typeof entry !== "object" || entry === null) return false;
+  const candidate = entry as LabEngineStatus;
+  return (
+    typeof candidate.engine === "string" &&
+    (candidate.status === "ready" || candidate.status === "partial" || candidate.status === "missing")
+  );
+}
+
 /** 安装器脚本按仓库布局定位：src 内模块上跳两级即仓根 scripts/，bin/say 符号链接经 Node realpath 解析后同样成立 */
 const INSTALL_ENGINE_SCRIPT = fileURLToPath(new URL("../../scripts/install-engine.mjs", import.meta.url));
 
@@ -28,20 +41,25 @@ async function labStatus(host: Host): Promise<LabEngineStatus[] | null> {
     if (typeof parsed !== "object" || parsed === null) return null;
     const engines = (parsed as { engines?: unknown }).engines;
     if (!Array.isArray(engines)) return null;
-    return engines.filter(
-      (entry): entry is LabEngineStatus =>
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as LabEngineStatus).engine === "string" &&
-        typeof (entry as LabEngineStatus).status === "string",
-    );
+    // 任一条目形态漂移即整响应不可信（S1 契约是四引擎全量清单）：整体降级而非放行脏条目
+    const list: LabEngineStatus[] = [];
+    for (const entry of engines) {
+      if (!isLabEngineStatus(entry)) return null;
+      list.push(entry);
+    }
+    return list;
   } catch {
     return null;
   }
 }
 
-/** config 当前默认引擎的生效值：文件在且解析出 engine 字符串取之，否则落默认（与合成路径的读法同源） */
+/**
+ * 当前默认引擎的生效标记：env 层（SAY_ENGINE）压 config 层，与合成路径的层序同源；
+ * flag 层只存在于逐次调用，ls 的清单标记不反映。
+ */
 async function currentEngineOf(deps: RunDeps): Promise<string> {
+  const envEngine = deps.host.env.SAY_ENGINE;
+  if (typeof envEngine === "string" && envEngine.length > 0) return envEngine;
   const configFile = deps.paths.configFile;
   if (!deps.host.fileExists(configFile)) return DEFAULT_ENGINE;
   try {
@@ -99,7 +117,8 @@ async function writeConfigEngine(
     const line = lines[i];
     if (line === undefined) continue;
     if (/^\s*\[/.test(line)) break;
-    if (/^\s*engine\s*=/.test(line)) {
+    // TOML 键可裸写也可引号包裹（"engine" = "x" 是同一顶层键），漏检引号形态会在 prepend 分支写出重复键
+    if (/^\s*(?:engine|"engine"|'engine')\s*=/.test(line)) {
       engineLine = i;
       break;
     }
