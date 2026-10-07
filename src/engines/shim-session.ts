@@ -138,7 +138,7 @@ export async function awaitShimReady(session: ShimSession, label: string, timeou
       const deadline = sessionDeadline(session, timeoutMs, label, "加载");
       const outcome = await Promise.race([session.lines.next(), session.sessionExit, deadline]);
       deadline.cancel(); // 收到帧即撤表：残留的 ref 计时器会把 CLI 退出拖满整个加载超时
-      if (outcome.done) throw terminatedError(session, label);
+      if (outcome.done) throw terminatedSessionError(session, label);
       const parsed = parseProtocolLine(outcome.value ?? "");
       if (parsed === null) continue; // 杂散输出：丢弃继续读
       if (parsed.type === "fatal") throw new EngineError(`${label} 加载失败：${parsed.message}`);
@@ -149,8 +149,8 @@ export async function awaitShimReady(session: ShimSession, label: string, timeou
   }
 }
 
-/** 流已终止的会话错误：错误现场从 stderr 尾部取（死亡原因总在最后几行） */
-function terminatedError(session: ShimSession, label: string): EngineError {
+/** 流已终止的会话错误：错误现场从 stderr 尾部取（死亡原因总在最后几行）。四引擎 binding 共用，label 各归引擎 */
+export function terminatedSessionError(session: ShimSession, label: string): EngineError {
   const last = lastMeaningfulLine(session.stderrTail);
   const suffix = last === undefined ? "" : `（stderr 末行：${last.slice(0, 300)}）`;
   return new EngineError(`${label} 进程输出已终止${suffix}`);

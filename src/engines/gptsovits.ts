@@ -140,13 +140,8 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
     if (ref === null) {
       throw new EngineError(`gptsovits 未登记角色音色 "${voice}"（${voicesDir} 下没有对应角色目录）`);
     }
+    // meta 随 spec 一次带回（voices.ts 双读收敛）：资产完整性判过，这里只取语言面
     const requirement = await resolveCharacterVoice(host, voicesDir, voice);
-    let meta: unknown;
-    try {
-      meta = JSON.parse(await host.readFileText(`${voicesDir}/${ref.character}/meta.json`));
-    } catch (error) {
-      throw new EngineError(`角色 "${ref.character}" 的 meta.json 读取失败：${messageOf(error)}`);
-    }
     let promptText: string;
     try {
       promptText = transcriptOf(await host.readFileText(requirement.textPath));
@@ -157,7 +152,7 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
     return {
       refAudioPath: requirement.audioPath,
       promptText,
-      promptLang: cloneVoiceLanguage(meta, ref.variant) ?? "zh",
+      promptLang: cloneVoiceLanguage(requirement.meta, ref.variant) ?? "zh",
     };
   };
 

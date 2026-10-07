@@ -15,6 +15,8 @@ export interface CloneVoiceRef {
 export interface CloneVoiceSpec extends CloneVoiceRef {
   audioPath: string;
   textPath: string;
+  /** meta.json 的解析结果随 spec 一次带回：调用方要 meta 面（语言/变体表）时不再二次读盘解析 */
+  meta: unknown;
 }
 
 /**
@@ -80,7 +82,7 @@ export async function resolveCharacterVoice(host: Host, voicesDir: string, name:
     const names = missing.map((file) => file.slice(dir.length + 1)).join(", ");
     throw new EngineError(`角色 "${ref.character}"${ref.variant === null ? "" : `（变体 ${ref.variant}）`}资产不完整：缺少 ${names}`);
   }
-  return { ...ref, audioPath, textPath };
+  return { ...ref, audioPath, textPath, meta };
 }
 
 function variantsOf(meta: unknown): ReadonlySet<string> {

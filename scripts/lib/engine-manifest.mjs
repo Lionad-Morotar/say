@@ -161,6 +161,11 @@ const FIRERED = {
     { file: "models/FireRedTTS3/text_tokenizer/tokenizer.json", size: 11422654, sha256: "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4", sources: [ms("FireRedTeam/FireRedTTS3", "text_tokenizer/tokenizer.json"), hf("FireRedTeam/FireRedTTS3", "text_tokenizer/tokenizer.json")] },
     { file: "models/FireRedTTS3/text_tokenizer/tokenizer_config.json", size: 9732, sha256: "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101", sources: [ms("FireRedTeam/FireRedTTS3", "text_tokenizer/tokenizer_config.json"), hf("FireRedTeam/FireRedTTS3", "text_tokenizer/tokenizer_config.json")] },
     { file: "models/FireRedTTS3/text_tokenizer/vocab.json", size: 2776833, sha256: "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", sources: [ms("FireRedTeam/FireRedTTS3", "text_tokenizer/vocab.json"), hf("FireRedTeam/FireRedTTS3", "text_tokenizer/vocab.json")] },
+    // default 嗓参考（S6）：FireRed 引擎无内置示例，取 v1 官方女声 prompt_2（调研 zh_clone 样音同源参考，
+    // zh/en 克隆共用同一参考，转写钉在 src/engines/firered.ts DEFAULT_PROMPT_TEXT）。
+    // v1 仓此件只在 GitHub examples 分发（ModelScope/HF 仓无）：raw 直连上海网络实测超时，
+    // jsdelivr CDN 直连可达且 sha256 一致，双通道互为 fallback。
+    { file: "prompts/prompt_2.wav", size: 270694, sha256: "113ac84c15ba60b9629abd5e1c43c51b15616ced2fa987d65bdf3d9d6bdb5211", sources: [{ net: "github", url: "https://raw.githubusercontent.com/FireRedTeam/FireRedTTS/main/examples/prompt_2.wav" }, { net: "jsdelivr", url: "https://cdn.jsdelivr.net/gh/FireRedTeam/FireRedTTS@main/examples/prompt_2.wav" }] },
   ],
   patches: [
     {

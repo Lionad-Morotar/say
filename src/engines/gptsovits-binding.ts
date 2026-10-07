@@ -1,14 +1,7 @@
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
-import { awaitShimReady, lastMeaningfulLine, sessionDeadline, spawnShimSession, setSessionActive, type ShimSession } from "./shim-session.ts";
-
-/** 流已终止的会话错误：错误现场从 stderr 尾部取（空窗快转的成因见 shim-session awaitShimReady 注释） */
-function terminatedSessionError(current: ShimSession): EngineError {
-  const last = lastMeaningfulLine(current.stderrTail);
-  const suffix = last === undefined ? "" : `（stderr 末行：${last.slice(0, 300)}）`;
-  return new EngineError(`GPT-SoVITS 进程输出已终止${suffix}`);
-}
+import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
 
 /** say-lab 引擎安装面（路径判据与 scripts/lib/engine-status.mjs 同构） */
 export interface GptsovitsLabSpec {
@@ -90,7 +83,7 @@ export function createShimSynth(spec: GptsovitsLabSpec, host: Host): GptsovitsSy
         const deadline = sessionDeadline(current, SYNTH_TIMEOUT_MS, ENGINE_LABEL, "合成");
         const outcome = await Promise.race([current.lines.next(), current.sessionExit, deadline]);
         deadline.cancel();
-        if (outcome.done) throw terminatedSessionError(current);
+        if (outcome.done) throw terminatedSessionError(current, ENGINE_LABEL);
         const msg = parseLine(outcome.value ?? "");
         if (msg === null) continue; // 引擎杂散输出：解析不了就丢，不毒化协议面
         if (msg.type === "fatal") throw new EngineError(`GPT-SoVITS 引擎致命错误：${msg.message}`);

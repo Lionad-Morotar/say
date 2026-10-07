@@ -62,7 +62,13 @@ describe("resolveCharacterVoice：角色资产到引擎克隆参数", () => {
       [`${VOICES}/lucy/ref.txt`]: "",
     });
     const spec = await resolveCharacterVoice(fake.host, VOICES, "lucy");
-    expect(spec).toEqual({ character: "lucy", variant: null, audioPath: `${VOICES}/lucy/ref.wav`, textPath: `${VOICES}/lucy/ref.txt` });
+    expect(spec).toEqual({
+      character: "lucy",
+      variant: null,
+      audioPath: `${VOICES}/lucy/ref.wav`,
+      textPath: `${VOICES}/lucy/ref.txt`,
+      meta: { character: "lucy", language: "en", transcription: { source: "官方字幕" } },
+    });
   });
 
   it("变体解析到 ref-<variant> 文件对", async () => {

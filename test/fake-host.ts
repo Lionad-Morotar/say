@@ -1,4 +1,4 @@
-import type { DaemonProcess, Host, SpawnOpts, SpawnOutcome } from "../src/host.ts";
+import type { DaemonProcess, DaemonSpawnOpts, Host, SpawnOpts, SpawnOutcome } from "../src/host.ts";
 import type { EnvMap } from "../src/types.ts";
 import { PassThrough } from "node:stream";
 
@@ -23,6 +23,8 @@ export interface FakeDaemonHandle {
 export interface DaemonSpawnRecord {
   cmd: string;
   args: string[];
+  /** spawn 时的增量 env（真 host 合并进父进程 env）；未传时为 undefined */
+  env?: EnvMap;
 }
 
 /** 工厂按 spawn 参数提供的流；缺省项由 fake 自建，null = spawn 本身失败 */
@@ -89,8 +91,9 @@ export function createFakeHost(options: FakeHostOptions = {}) {
       spawns.push(record);
       return options.spawnOutcome ? options.spawnOutcome(record) : { exitCode: defaultExit, signal: null, stdout: "", stderr: "" };
     },
-    spawnDaemon: (cmd: string, args: readonly string[]): DaemonProcess => {
+    spawnDaemon: (cmd: string, args: readonly string[], opts?: DaemonSpawnOpts): DaemonProcess => {
       const record: DaemonSpawnRecord = { cmd, args: [...args] };
+      if (opts?.env !== undefined) record.env = opts.env;
       daemons.push(record);
       const wiring = options.daemonFactory?.(record);
       const requests: string[] = [];
