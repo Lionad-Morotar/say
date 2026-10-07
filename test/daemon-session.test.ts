@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
@@ -397,6 +397,66 @@ describe("DaemonSession 竞态仲裁：输家等待与加载宽限", () => {
         dummy.kill();
       }
     } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("spawn 句柄先连上再以非 3 码退场：进程已死归属即让渡，仍走 pid 文件 kill 重拉", async () => {
+    const h = new Harness({ readyTimeoutMs: 1200 });
+    try {
+      const dummy = await makeLiveDummy(h.pidPath);
+      h.spawnHooks.push((proc) => {
+        void startFakeDaemon(h.sockPath, { ready: readyFrame({ protocol: "1", pid: dummy.pid }) }).then((d) => h.track(d));
+        setTimeout(() => proc.settle(1, null), 10); // 先连上后死：退场码非 3 同样不构成归属权
+      });
+      h.spawnHooks.push(() => {
+        void startFakeDaemon(h.sockPath).then((d) => h.track(d));
+      });
+      await h.session.ensure();
+      expect(await dummy.expectKilled()).toBe("SIGKILL");
+      expect(h.spawns).toHaveLength(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("pid 文件 mtime 在未来（时钟偏斜）：加载宽限拒信不可证起点，warm 超时即判 kill", async () => {
+    const h = new Harness({ warmTimeoutMs: 80, readyTimeoutMs: 1500 });
+    try {
+      const dummy = await makeLiveDummy(h.pidPath);
+      utimesSync(h.pidPath, new Date(), new Date(Date.now() + 60_000)); // 负年龄 = 「加载起点」不可信，宽限窗不予开启
+      h.track(await startFakeDaemon(h.sockPath, { ready: "none" }));
+      const t0 = Date.now();
+      h.spawnHooks.push(() => {
+        void startFakeDaemon(h.sockPath).then((d) => h.track(d));
+      });
+      await h.session.ensure();
+      expect(Date.now() - t0).toBeLessThan(400); // 未被 1500ms 续等窗口拖长：负龄直接走僵死语义
+      expect(await dummy.expectKilled()).toBe("SIGKILL");
+      expect(h.spawns).toHaveLength(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("spawn 句柄在位但注册点已被他人接管：完整让渡 external 归属核对，kill 在位者后照常重拉", async () => {
+    const h = new Harness({ readyTimeoutMs: 600, pollIntervalMs: 20 });
+    let dummy: Awaited<ReturnType<typeof makeLiveDummy>> | null = null;
+    try {
+      dummy = await makeLiveDummy(h.pidPath); // pid 文件指向 dummy 而非本会话 spawn 的 proc
+      h.spawnHooks.push(() => {
+        // proc 永不退场（socketFromSpawn 名义为 true）；对面 daemon ready 自述归属 dummy
+        void startFakeDaemon(h.sockPath, { ready: readyFrame({ protocol: "1", pid: dummy!.pid }) }).then((d) => h.track(d));
+      });
+      await expect(h.session.ensure()).rejects.toBeInstanceOf(DaemonUnavailableError);
+      // 接管检测让 owned 轮走 external：peerPid 与 pid 文件核对一致 → kill dummy + 清注册点
+      // → 第二轮重拉。第二轮无供给 hook：fake proc 永不 bind → 加载窗尽判 unavailable 封顶。
+      // dummy 之死即「未拿 spawn 句柄空杀自己、未弃权致轮次浪费」的可观测面
+      expect(await dummy.expectKilled()).toBe("SIGKILL");
+      expect(h.spawns).toHaveLength(2);
+      expect(existsSync(h.sockPath)).toBe(false); // 在位过期 daemon 的注册点被正当清理
+    } finally {
+      dummy?.kill();
       await h.cleanup();
     }
   });

@@ -246,27 +246,38 @@ export class DaemonSession {
    * 指向被复用的无辜进程、sock 可能是另一活 daemon 的注册点，不确定就不动 destructive 面。
    */
   async killDaemon(): Promise<"killed" | "skipped"> {
+    const spawnedPid = this.socketFromSpawn ? (this.spawnedProc?.pid ?? null) : null;
+    const pidFile = await this.readPidFile();
+    // spawn 句柄的归属非终身制：拉起后到 kill 决策前，注册点可能被他人 unlink-rebind 接管
+    // （backlog 排满的 ECONNREFUSED 被误判残file等交错）。pid 文件仍指自己 proc 才走 owned：
+    // 收自己进程、清自己文件。一旦不指自己，这条 socket 对面的 daemon 归属他人，
+    // 完整让渡 external 路径（经归属核对 kill 在位者 + 清其注册点）——半程弃权会把
+    // 「kill 过期 daemon 后重拉」的两轮制收敛打断成「文件挡路、轮次耗尽」
+    if (spawnedPid !== null && pidFile !== null && pidFile !== spawnedPid) {
+      this.socketFromSpawn = false;
+    }
     if (this.socketFromSpawn) {
-      const pid = this.spawnedProc?.pid ?? null;
-      if (pid !== null) {
+      if (spawnedPid !== null) {
         try {
-          process.kill(pid, "SIGKILL");
+          process.kill(spawnedPid, "SIGKILL");
         } catch {
           // 进程已死：kill 失败无意义，残file清理由下面兜住
         }
       }
-    } else {
-      const pidFile = await this.readPidFile();
-      if (this.peerPid !== null && pidFile !== null && this.peerPid !== pidFile) {
-        this.detachSocket();
-        return "skipped";
-      }
-      if (pidFile !== null) {
-        try {
-          process.kill(pidFile, "SIGKILL");
-        } catch {
-          // 同上
-        }
+      await unlinkQuiet(this.opts.socketPath);
+      await unlinkQuiet(this.opts.pidPath);
+      this.detachSocket();
+      return "killed";
+    }
+    if (this.peerPid !== null && pidFile !== null && this.peerPid !== pidFile) {
+      this.detachSocket();
+      return "skipped";
+    }
+    if (pidFile !== null) {
+      try {
+        process.kill(pidFile, "SIGKILL");
+      } catch {
+        // 同上
       }
     }
     await unlinkQuiet(this.opts.socketPath);
