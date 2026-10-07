@@ -24,7 +24,7 @@ import traceback
 
 # 握手版本键的协议常量：daemon 形态 ready 帧携带，Node 侧（src/engines/daemon-session.ts）校验。
 # 与仓内 TS 侧常量同步 bump——同仓文件天然同版本，漂移只发生在「旧代码拉起的旧 daemon」场景，
-# 那正是握手要拒的对象。per-call 形态不携带（帧消费面忽略未知字段，票 04「帧不动换传输」）。
+# 那正是握手要拒的对象。per-call 形态不携带（帧消费面忽略未知字段：帧不动、只换传输）。
 PROTOCOL_VERSION = "2"
 
 # 权重指纹的磁盘投影清单：安装期 sha256 校验通过后的 .install-ok marker（install-engine.mjs 写）。
@@ -44,7 +44,7 @@ def weights_fingerprint(lab_dir: str) -> str:
     """marker 清单（rel 升序）逐条 `rel|size|mtime_ms`（缺项 `rel|missing|0`）换行 join 的 sha256。
 
     毫秒取整与 TS 侧 BigIntStats.mtimeMs 同 floor 语义（epoch 纳秒直接超 2^53，浮点不可靠）；
-    粒度对安装事件足够。升级重装重写 marker → mtime 变 → 旧 daemon 握手失效自动重拉（票 04 §1）。
+    粒度对安装事件足够。升级重装重写 marker → mtime 变 → 旧 daemon 握手失效自动重拉。
     """
     lines = []
     for rel in sorted(WEIGHT_MARKERS):
