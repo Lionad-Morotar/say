@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>say 引擎层 v2 嗓位矩阵·终版（试听裁决落档：zh indextts / en firered / ja gptsovits）</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; max-width: 84rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); padding-bottom: .3rem; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; }
+  th, td { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding: .4rem .5rem; text-align: left; vertical-align: top; }
+  th { white-space: nowrap; }
+  .sub { display: block; font-size: .72rem; color: gray; }
+  code { background: color-mix(in srgb, currentColor 10%, transparent); padding: .1rem .3rem; border-radius: 4px; }
+  td.play { padding: 0; }
+  td.play button { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; padding: .4rem .5rem; }
+  td.play button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+  td.play button::before { content: "▶ "; }
+  td.play button.playing::before { content: "🔊 "; }
+  td.na { color: gray; text-align: center; }
+  td.await { text-align: center; }
+  td.await::before { content: "⚪"; }
+  td.fix { outline: 2px solid color-mix(in srgb, #e0533d 55%, transparent); outline-offset: -2px; }
+  td.ja { background: color-mix(in srgb, #7a5cc6 8%, transparent); }
+  td.winner { outline: 2px solid color-mix(in srgb, #3da85c 70%, transparent); outline-offset: -2px; }
+  #player { position: sticky; bottom: 0; background: color-mix(in srgb, Canvas 92%, transparent); border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 10px; padding: .6rem .9rem; margin-top: 1rem; backdrop-filter: blur(6px); }
+  #player audio { width: 100%; max-width: 40rem; display: block; }
+  #player .label { font-size: .8rem; color: gray; }
+  .gap { border: 1px solid color-mix(in srgb, #e0533d 50%, transparent); border-radius: 8px; padding: .6rem .9rem; margin: .5rem 0; }
+  .fixed { border: 1px solid color-mix(in srgb, #3da85c 50%, transparent); border-radius: 8px; padding: .6rem .9rem; margin: .5rem 0; }
+  .legend span { margin-right: 1.2rem; }
+</style>
+</head>
+<body>
+
+<!-- ============ 标题与图例 ============ -->
+<h1>say 引擎层 v2 嗓位多维矩阵 <small>终版 · 试听裁决落档</small></h1>
+<p>2026-10-07 归档。<b>Lionad 试听裁决三语默认：zh → indextts + 芙莉莲中配，en → firered（内置女声参考），ja → gptsovits + 芙莉莲日配</b>，已落 <code>src/config.ts</code> 内置预设。本文件为裁决依据：40 组样音全部可播（绿框 = 裁决嗓位），音源修复记录与引擎属性见文末。<a href="./review-glm-5.3-flash.md">外部模型审查报告</a></p>
+<p class="legend"><span><b>▶</b> 有样音，点击播放</span><span>⚪ 已接线、未出样</span><span>— 不适用</span><span><b>红框</b> = 音源修复重采</span><span><b>紫底</b> = ja 新增</span><span><b>绿框</b> = 试听裁决嗓位</span></p>
+
+<!-- ============ 主矩阵：engine × locale × 嗓位 ============ -->
+<h2>主矩阵：engine × zh/en/ja × 嗓位</h2>
+<table data-testid="voice-matrix">
+  <tr>
+    <th rowspan="2">引擎</th>
+    <th colspan="4">zh</th>
+    <th colspan="4">en</th>
+    <th colspan="2">ja</th>
+  </tr>
+  <tr>
+    <th>default</th><th>芙莉莲</th><th>D.Va</th><th>Lucy</th>
+    <th>default</th><th>芙莉莲</th><th>D.Va</th><th>Lucy</th>
+    <th>default</th><th>芙莉莲</th>
+  </tr>
+  <tr>
+    <td><b>gptsovits</b><span class="sub">ja 默认引擎 · CPU 档</span></td>
+    <td class="play"><button data-src="audio/gptsovits-zh-default.wav">default-zh<span class="sub">男声（官方示例参考）</span></button></td>
+    <td class="play fix"><button data-src="audio/gptsovits-zh-frieren-zh.wav">frieren-zh<span class="sub">修复重采</span></button></td>
+    <td class="play"><button data-src="audio/gptsovits-zh-dva.wav">dva<span class="sub">跨语种</span></button></td>
+    <td class="play fix"><button data-src="audio/gptsovits-zh-lucy.wav">lucy<span class="sub">干净源重采</span></button></td>
+    <td class="play"><button data-src="audio/gptsovits-en-default.wav">default-en<span class="sub">男声</span></button></td>
+    <td class="play fix"><button data-src="audio/gptsovits-en-frieren-en.wav">frieren-en<span class="sub">窗规整重采</span></button></td>
+    <td class="play fix"><button data-src="audio/gptsovits-en-dva.wav">dva<span class="sub">窗规整重采</span></button></td>
+    <td class="play fix"><button data-src="audio/gptsovits-en-lucy.wav">lucy</button></td>
+    <td class="play ja"><button data-src="audio/gptsovits-ja-default.wav">default<span class="sub">default-zh 参考降级</span></button></td>
+    <td class="play ja winner"><button data-src="audio/gptsovits-ja-frieren.wav">frieren<span class="sub">日配主参考 · ja 裁决嗓</span></button></td>
+  </tr>
+  <tr>
+    <td><b>voxcpm</b><span class="sub">流式 · 质量上限</span></td>
+    <td class="play"><button data-src="audio/voxcpm-zh-default.wav">default<span class="sub">文本指令嗓</span></button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-zh-frieren-zh.wav">frieren-zh</button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-zh-dva.wav">dva<span class="sub">窗规整后恢复</span></button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-zh-lucy.wav">lucy</button></td>
+    <td class="play"><button data-src="audio/voxcpm-en-default.wav">default</button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-en-frieren-en.wav">frieren-en<span class="sub">塌男声病灶修复</span></button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-en-dva.wav">dva<span class="sub">无浊音病灶修复</span></button></td>
+    <td class="play fix"><button data-src="audio/voxcpm-en-lucy.wav">lucy</button></td>
+    <td class="play ja"><button data-src="audio/voxcpm-ja-default.wav">default</button></td>
+    <td class="play ja"><button data-src="audio/voxcpm-ja-frieren.wav">frieren</button></td>
+  </tr>
+  <tr>
+    <td><b>indextts</b><span class="sub">zh 默认引擎（试听裁决）· 节奏控制最强</span></td>
+    <td class="play"><button data-src="audio/indextts-zh-default.wav">default<span class="sub">男声（试听：吼出来的）</span></button></td>
+    <td class="play fix winner"><button data-src="audio/indextts-zh-frieren-zh.wav">frieren-zh<span class="sub">zh 裁决嗓 · 修复重采</span></button></td>
+    <td class="play"><button data-src="audio/indextts-zh-dva.wav">dva</button></td>
+    <td class="play fix"><button data-src="audio/indextts-zh-lucy.wav">lucy</button></td>
+    <td class="play"><button data-src="audio/indextts-en-default.wav">default<span class="sub">男声</span></button></td>
+    <td class="play fix"><button data-src="audio/indextts-en-frieren-en.wav">frieren-en</button></td>
+    <td class="play fix"><button data-src="audio/indextts-en-dva.wav">dva</button></td>
+    <td class="play fix"><button data-src="audio/indextts-en-lucy.wav">lucy</button></td>
+    <td class="play ja"><button data-src="audio/indextts-ja-default.wav">default</button></td>
+    <td class="play ja"><button data-src="audio/indextts-ja-frieren.wav">frieren</button></td>
+  </tr>
+  <tr>
+    <td><b>firered</b><span class="sub">en 默认引擎（试听裁决）· Instruct 未接 · 39G 在位</span></td>
+    <td class="play"><button data-src="audio/firered-zh-default.wav">default<span class="sub">女声（自带示例参考）</span></button></td>
+    <td class="play fix"><button data-src="audio/firered-zh-frieren-zh.wav">frieren-zh</button></td>
+    <td class="play"><button data-src="audio/firered-zh-dva.wav">dva</button></td>
+    <td class="play fix"><button data-src="audio/firered-zh-lucy.wav">lucy</button></td>
+    <td class="play winner"><button data-src="audio/firered-en-default.wav">default<span class="sub">女声 · en 裁决嗓</span></button></td>
+    <td class="play fix"><button data-src="audio/firered-en-frieren-en.wav">frieren-en</button></td>
+    <td class="play fix"><button data-src="audio/firered-en-dva.wav">dva</button></td>
+    <td class="play fix"><button data-src="audio/firered-en-lucy.wav">lucy</button></td>
+    <td class="play ja"><button data-src="audio/firered-ja-default.wav">default<span class="sub">Japanese tag</span></button></td>
+    <td class="play ja"><button data-src="audio/firered-ja-frieren.wav">frieren</button></td>
+  </tr>
+  <tr>
+    <td><b>zipvoice</b><span class="sub">v1 保留 · 回退链</span></td>
+    <td class="na">—</td><td class="await"><span class="sub">v1 未复测</span></td><td class="await"><span class="sub">v1 未复测</span></td><td class="await"><span class="sub">v1 未复测</span></td>
+    <td class="na">—</td><td class="await"><span class="sub">v1 未复测</span></td><td class="await"><span class="sub">v1 未复测</span></td><td class="await"><span class="sub">v1 未复测</span></td>
+    <td class="na">—</td><td class="na">—</td>
+  </tr>
+  <tr>
+    <td><b>sherpa</b><span class="sub">v1 基线 · locale miss 兜底</span></td>
+    <td class="await"><span class="sub">matcha-zh：zf_* 女 + zm_* 男×45</span></td><td class="na">—</td><td class="na">—</td><td class="na">—</td>
+    <td class="await"><span class="sub">af_maple 女</span></td><td class="na">—</td><td class="na">—</td><td class="na">—</td>
+    <td class="na">—</td><td class="na">—</td>
+  </tr>
+  <tr>
+    <td><b>system</b><span class="sub">回退终点</span></td>
+    <td class="await"><span class="sub">macOS 开放集</span></td><td class="na">—</td><td class="na">—</td><td class="na">—</td>
+    <td class="await"><span class="sub">macOS 开放集</span></td><td class="na">—</td><td class="na">—</td><td class="na">—</td>
+    <td class="await"><span class="sub">日文系统嗓（Kyoko 等）</span></td><td class="na">—</td>
+  </tr>
+</table>
+
+<!-- ============ 播放器 ============ -->
+<div id="player">
+  <div class="label" data-testid="player-label">点击矩阵中 ▶ 格播放对应样音</div>
+  <audio id="audio" controls preload="none"></audio>
+</div>
+
+<!-- ============ 默认链 ============ -->
+<h2>默认链（voice="default" 关键字按 locale 落位，试听裁决后）</h2>
+<p>
+  zh → <code>indextts + frieren-zh</code> ·
+  en → <code>firered + default</code>（引擎内置女声示例参考）·
+  ja → <code>gptsovits + frieren</code>（日配主参考）
+</p>
+
+<!-- ============ 嗓位性别 ============ -->
+<h2>嗓位性别 × 音源（gender 维）</h2>
+<table>
+  <tr><th>嗓位</th><th>性别</th><th>依据</th><th>音源与处理</th></tr>
+  <tr><td>frieren（ja/en/zh）</td><td>female</td><td>種﨑敦美 / Mallory Roddak / 李蝉妃</td><td>官方素材；261007 三窗规整：ja 10.0s、en 0-8.4s 前三句、zh 3.24s 独句（原窗混村长男声已弃）</td></tr>
+  <tr><td>dva</td><td>female</td><td>Charlet Chung</td><td>主参考窗规整 1.5-10.5s 前两句（原 28s 致 voxcpm 无浊音）；peon-ping 17 条干音另存</td></tr>
+  <tr><td>lucy</td><td>female</td><td>Emi Lo（赛博浪客 S1E2）</td><td>htdemucs_ft 重分离 7.3s 露西连续两句，零串线核验</td></tr>
+  <tr><td>default（gptsovits）</td><td><b>male</b></td><td>官方示例参考 + 261007 试听</td><td>随仓 zh/en 男声示例；ja 无中性资产，参考降级 default-zh</td></tr>
+  <tr><td>default（indextts）</td><td><b>male</b></td><td>261007 试听（吼出来的男声）</td><td>引擎自带示例参考；zh 裁决嗓是 frieren-zh 而非它</td></tr>
+  <tr><td>default（firered）</td><td>female</td><td>自带示例参考为女声</td><td>引擎仓库示例；en 裁决嗓即落它</td></tr>
+  <tr><td>default（voxcpm）</td><td>随指令</td><td>voice creation 文本指令嗓</td><td>性别由指令描述决定，无固定参考</td></tr>
+  <tr><td>sherpa 内置</td><td>均有</td><td>kokoro 英文女声系；matcha-zh 含 <code>zf_*</code> 女与 <b>男声 <code>zm_*</code>×45</b></td><td><code>-e sherpa -v zm_009</code> 即刻可用中文男声</td></tr>
+  <tr><td>male 角色嗓（神经克隆）</td><td colspan="3"><b>仍空白</b>——角色目录无男声资产；采一条男角色 ref 即四克隆引擎自动认领。男声现路：sherpa <code>zm_*</code> 与 system 开放集</td></tr>
+</table>
+
+<!-- ============ 引擎属性 ============ -->
+<h2>引擎属性（延迟 × 形态 × ja × 安装）</h2>
+<table>
+  <tr><th>引擎</th><th>热延迟（线 3s）</th><th>形态</th><th>ja 接线</th><th>安装（16:09 实测全 ready）</th></tr>
+  <tr><td>gptsovits</td><td>1.60-2.75s 双 PASS（CPU）</td><td>整句</td><td>✓ api_v2 语言码 ja（日英混合模式）</td><td>ready · fresh 全链实证</td></tr>
+  <tr><td>voxcpm</td><td>3.49s MARGINAL；流式首包 0.21-0.54s</td><td>流式 + 整句</td><td>✓ VoxCPM2 官方 30 语，文本自识无参数位</td><td>ready · 4.6G 在位</td></tr>
+  <tr><td>indextts</td><td>3.9-5.7s FAIL</td><td>整句 + duration_factor</td><td>✓ LANGUAGES 表 ja 一等</td><td>ready</td></tr>
+  <tr><td>firered</td><td>4.45-5.50s FAIL</td><td>整句；Instruct 指令面（语速/pitch/volume）一期未接线</td><td>✓ shim 映射 &lt;|Japanese|&gt; 白名单 tag</td><td>ready · 39G 在位</td></tr>
+  <tr><td>zipvoice</td><td>v1 基线</td><td>整句</td><td>✗ 维持 zh/en（回退链成员）</td><td>在位</td></tr>
+  <tr><td>sherpa</td><td>最快（kokoro onnx）</td><td>分块流水</td><td>✗ kokoro ja 嗓未接</td><td>在位</td></tr>
+  <tr><td>system</td><td>基线（22 字约 2s）</td><td>直调</td><td>系统嗓自带（Kyoko 等）</td><td>OS 自带</td></tr>
+</table>
+
+<!-- ============ 试听裁决 ============ -->
+<h2>261007 试听裁决（人听定档，推翻延迟指标推演）</h2>
+<div class="fixed"><b>zh → indextts + frieren-zh</b>：中文听感四引擎最优（修复后芙莉莲中配窗）。此前按热延迟指标推演选 gptsovits——延迟达标不等于听感最优，试听为唯一 ground truth。</div>
+<div class="fixed"><b>en → firered + 内置女声参考</b>：英文听感最优；firered 自带示例参考恰为女声（其余引擎内置英文参考多为男声或不稳）。Instruct 控制面能力仍未接线，属独立扩展项。</div>
+<div class="fixed"><b>ja → gptsovits + frieren</b>：与接线时的内置预设一致，试听确认。地道日音仅芙莉莲日配主参考一路；gptsovits ja default 为中文腔降级参考，不作默认。</div>
+
+<!-- ============ 修复记录 ============ -->
+<h2>261007 修复记录（Lionad 试听驱动）</h2>
+<div class="fixed"><b>① frieren-zh 音源找错人</b>：原 20.8s B 站中配 raw 窗主说话人是村长（男声）——「我想请你解读这本书」是问芙莉莲的话。取窗内 11.62-14.86s 芙莉莲独句（3.24s）重采。</div>
+<div class="fixed"><b>② voxcpm 长参考失稳（引擎约束，非资产缺陷）</b>：&gt;10s 参考致零样本克隆塌形——ref-en 14s → 男声（F0 108-113Hz vs 参考 185Hz，可复现），dva 28s → 无浊音；≤10s 全正常。角色资产三窗规整（ja 10.0 / en 8.4 / dva 9.0），修复后 F0 对拍 183Hz ✓。GPT-SoVITS 的 3-10s 硬限在 VoxCPM 上同样成立，早期调研只做指标复核未做人工听感，漏抓。</div>
+<div class="fixed"><b>③ lucy 干净源</b>：htdemucs_ft 4 模型集成重分离，取 5.0-12.3s 露西连续两句（7.3s）；官方 Lucy 特辑（日英混剪）与 Drive Like Hell（枪战短句）验证后弃用。</div>
+<div class="fixed"><b>④ default 性别标注纠偏</b>：gptsovits/indextts default = 官方示例<b>男声</b>（早期版本标"中性"无依据），firered default = 女声，voxcpm = 指令随性别；sherpa 有 45 个 <code>zm_*</code> 中文男声（"男声仅 system 可达"为误断）。</div>
+<div class="fixed"><b>⑤ ja 进域接线</b>：detectTextLang 假名优先三值化；firered shim &lt;|Japanese|&gt; 映射；locale/config 三元化，<code>ja → gptsovits + frieren</code> 内置预设；协议文档语种面更新；测试覆盖 121+ 用例（引擎四套件 115 + 渲染器 6 全绿）。</div>
+
+<!-- ============ 未决项 ============ -->
+<h2>未决项</h2>
+<div class="gap"><b>ja 已知边界</b>：纯汉字无假名日文句（汉文训读体外罕见）按 zh 走；gptsovits ja default 是中文腔参考降级；zipvoice/sherpa 维持 zh/en。</div>
+<div class="gap"><b>male 角色嗓空白（克隆面）</b>：采一条男角色（<code>ref.wav + ref.txt + meta.json</code> 进 <code>~/.local/share/say/voices/&lt;角色&gt;/</code>，窗守 3-10s）即四引擎自动认领。男声现路：sherpa <code>zm_*</code> 与 system 开放集。</div>
+<div class="gap"><b>FireRed Instruct 控制面</b>：en 默认引擎已上位而控制面（语速/pitch/volume）闲置，需要时经协议可选字段另立 effort。</div>
+
+<script>
+/* 单元格点击 → 顶部播放器换轨；40 格不逐格挂控件，避免界面噪音 */
+const audio = document.getElementById("audio");
+const label = document.querySelector("[data-testid='player-label']");
+let current = null;
+document.querySelectorAll("td.play button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (current === btn && !audio.paused) { audio.pause(); btn.classList.remove("playing"); return; }
+    if (current) current.classList.remove("playing");
+    current = btn;
+    audio.src = btn.dataset.src;
+    label.textContent = btn.dataset.src.split("/").pop();
+    btn.classList.add("playing");
+    audio.play();
+  });
+});
+audio.addEventListener("ended", () => { if (current) current.classList.remove("playing"); });
+</script>
+
+</body>
+</html>

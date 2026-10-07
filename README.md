@@ -33,7 +33,7 @@ say --engine voxcpm "流式引擎试一句"   # 逐次指定，不改 config
 SAY_ENGINE=firered say "english take"  # 会话级指定
 ```
 
-默认预设按 locale 每次调用现场解析：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。三语默认由 261007 试听裁决定档：**zh → indextts + frieren-zh · en → firered（内置女声）· ja → gptsovits + frieren**。要固化引擎与嗓音，用 `say engine use` 写 config。
+默认预设按 locale 每次调用现场解析：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。三语默认由 261007 试听裁决定档：**zh → indextts + frieren-zh · en → firered（内置女声）· ja → gptsovits + frieren**（样音矩阵见「试听矩阵」节）。要固化引擎与嗓音，用 `say engine use` 写 config。
 
 ## 调用面
 
@@ -75,6 +75,10 @@ engine = "firered"
 | system | 无 | 系统 say 音色 | 回退后端与透传目标 |
 
 超过 400 近似 token 的长文按句边界分块流水：播块 i 时合成块 i+1，首包出声远早于整段完成。
+
+## 试听矩阵
+
+三语默认引擎裁决来自 40 组样音人听（261007）：打开 `docs/audition/261007/engine-v2-voice-matrix.html` 点击播放（样音在同目录 `audio/`），含引擎×语种×嗓位矩阵、嗓位性别音源表与音源修复记录；附外部模型审查报告。
 
 ## 添加角色嗓
 
