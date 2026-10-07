@@ -68,7 +68,7 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     expect(INSTALL_ENGINE_SCRIPT).not.toContain(".claude/scripts");
   });
 
-  it("列出三个内置引擎与 lab 引擎及安装状态", async () => {
+  it("列出四个内置引擎与 lab 引擎及安装状态（已接线引擎只标 wired，lab 状态让位）", async () => {
     const fake = setup();
     const code = await runEngineCommand(fake.deps, { kind: "engine", action: "ls", name: null });
     expect(code).toBe(0);
@@ -76,10 +76,9 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     expect(out).toContain("sherpa");
     expect(out).toContain("zipvoice");
     expect(out).toContain("system");
-    expect(out).toContain("gptsovits");
-    expect(out).toMatch(/gptsovits\s+lab:ready/);
+    expect(out).toMatch(/gptsovits\s+wired/);
     expect(out).toMatch(/voxcpm\s+lab:missing/);
-    expect(out).not.toMatch(/gptsovits\s+.*wired/);
+    expect(out).not.toMatch(/gptsovits\s+.*lab:/);
   });
 
   it("config 声明的当前引擎标 *，未声明时标默认 sherpa", async () => {
@@ -103,7 +102,8 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     expect(code).toBe(0);
     const out = stdoutOf(fake);
     expect(out).toContain("sherpa");
-    expect(out).not.toContain("gptsovits");
+    // gptsovits 已接线（S3）：降级时仍在已接线清单里，只是不带 lab 状态
+    expect(out).toMatch(/gptsovits\s+wired/);
     expect(fake.stderr.join("")).toContain("安装状态查询失败");
   });
 
@@ -127,7 +127,8 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     const code = await runEngineCommand(fake.deps, { kind: "engine", action: "ls", name: null });
     expect(code).toBe(0);
     expect(stdoutOf(fake)).not.toContain("lab:degraded");
-    expect(stdoutOf(fake)).not.toContain("gptsovits");
+    // 脏条目不放行：gptsovits 出现只因为是已接线引擎（wired 形态），不带任何 lab 标记
+    expect(stdoutOf(fake)).not.toMatch(/gptsovits\s+.*lab:/);
     expect(fake.stderr.join("")).toContain("安装状态查询失败");
   });
 });
@@ -170,9 +171,9 @@ describe("engine use：行级手术写 config 默认引擎", () => {
     expect(fake.stderr.join("")).toContain("gptsovits");
   });
 
-  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链", async () => {
+  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链（gptsovits 已接线 S3，示例换 voxcpm）", async () => {
     const fake = setup();
-    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "gptsovits" });
+    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "voxcpm" });
     expect(code).toBe(0);
     expect(fake.stderr.join("")).toContain("尚未接线");
   });

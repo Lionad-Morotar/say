@@ -1,0 +1,1 @@
+This is a reference audio for voice cloning. The weather in Shanghai is quite pleasant today, with a gentle breeze. We are testing the speech synthesis engine on this machine.

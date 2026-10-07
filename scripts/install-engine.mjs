@@ -4,7 +4,7 @@
 // 幂等语义：venv 在则跳过创建、权重 sha256 已对则跳过下载、patch 已应用则跳过——重复执行只补缺失部分。
 // 代理透传 = 子进程继承本进程 env；网络约定（上海）：HF_ENDPOINT 镜像 fallback 由通道表承载，代理 env 交给用户 shell。
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ENGINES, ENGINE_IDS, sayLabRoot, engineDir, UV_INDEX } from "./lib/engine-manifest.mjs";
 import { downloadAsset, sizeMatches } from "./lib/engine-channels.mjs";
@@ -86,10 +86,19 @@ function linkVenvPackageAssets(manifest, dir) {
     const extracted = path.join(dir, w.file);
     if (!existsSync(extracted)) continue;
     const target = path.join(sitePackages, w.linkIntoVenvPackage, path.basename(w.file));
-    if (existsSync(target)) continue; // 幂等：venv 里已有（上轮拷过）不再动
+    // 就绪判据锚 Mecab 真字典文件：目录壳存在而 sys.dic 缺失（曾拷成 tar 顶层嵌套壳）不算已装
+    if (existsSync(path.join(target, "sys.dic"))) continue;
     if (!existsSync(path.join(sitePackages, w.linkIntoVenvPackage))) continue; // 依赖未装好，跳过待下轮
+    rmSync(target, { recursive: true, force: true }); // 上一轮的坏形态壳清掉，拷内容重装
     const r = spawnSync("cp", ["-R", extracted, target], { encoding: "utf8" });
     if (r.status !== 0) fail(`字典拷入 venv 失败 (${w.file}): ${(r.stderr ?? "").slice(-200)}`);
+    // tar 产物自带与 w.file 同名的顶层目录：cp 把壳一起带进来会让 pyopenjtalk 在
+    // target/下一层才找得到 mecab 文件，OpenJTalk 初始化直接炸——内层内容上提拉平
+    const nested = path.join(target, path.basename(w.file));
+    if (existsSync(nested)) {
+      for (const entry of readdirSync(nested)) renameSync(path.join(nested, entry), path.join(target, entry));
+      rmSync(nested, { recursive: true, force: true });
+    }
   }
 }
 
