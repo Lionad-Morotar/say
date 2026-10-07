@@ -32,14 +32,15 @@ export const DEFAULT_RATE_WPM = 175;
 const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets"] as const;
 
 /**
- * 内置通用嗓预设：验收第三条（en/zh 各 ≥1）的零配置落点。
- * zh 择优 matcha（zh_baker）：本机实测短句热态 0.41s，是全部通道里最快的中文嗓
- * （kokoro zh 热 2.57s 且官方自评中文 D 级）；en 走 kokoro 默认嗓（en A 级口碑，1.59s）。
- * matcha 单女声且数据集非商用，个人使用注记见蓝图。
+ * 内置预设表：voice="default" 关键字按 locale 的零配置落点（S8 默认裁决，试听简报可改判）。
+ * zh 是 D10 修订后的默认体验底线：GPT-SoVITS v2 CPU 档是四引擎实测唯一中英热延迟双 PASS，
+ * 默认嗓取 frieren-zh（官方中文配音 raw 素材，唯一未分离处理的中文角色音源）；
+ * 想换通用嗓改 config voice = "default"（gptsovits 按文本语言选内置中性参考）。
+ * en 保持 v1 sherpa 链不倒退（kokoro 默认嗓 en A 级口碑）；用户试听简报后可一行改判。
  */
 export const BUILTIN_PRESETS: Readonly<Record<string, PresetDefinition>> = {
   en: { voice: "af_maple", engine: "sherpa" },
-  zh: { voice: "zh_baker", engine: "sherpa" },
+  zh: { voice: "frieren-zh", engine: "gptsovits" },
 };
 
 export type ConfigFileParse = { ok: true; value: ConfigFile } | { ok: false; error: string };

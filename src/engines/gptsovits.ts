@@ -82,6 +82,62 @@ interface RefRequirement {
   promptLang: string;
 }
 
+/**
+ * 参考音频窗口：api_v2 对参考硬拒 3-10s 外（「outside the 3-10 second range」，frieren-zh 20.8s / dva 28s 实测被拒）。
+ * 判据用官方上下限原值（入仓 default-en 9.565s 按它做的，贴边合法），截断落点留浮点余量避边界抖动。
+ */
+const REF_WINDOW_MIN_S = 3;
+const REF_WINDOW_MAX_S = 10;
+const REF_TRIM_S = 9.5;
+
+/** 标准 PCM wav 的截断所需字段：byteRate 定秒长，data 块定字节面 */
+export interface WavView {
+  byteRate: number;
+  blockAlign: number;
+  dataOffset: number;
+  dataSize: number;
+}
+
+/** 解析 RIFF/PCM wav 头。非 wav（解析失败）返回 null：参考格式问题留给 shim 报它的精确错 */
+export function wavView(bytes: Uint8Array): WavView | null {
+  if (bytes.length < 44) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const text = (from: number, length: number) => String.fromCharCode(...bytes.subarray(from, from + length));
+  if (text(0, 4) !== "RIFF" || text(8, 4) !== "WAVE") return null;
+  let offset = 12;
+  let fmt: { byteRate: number; blockAlign: number } | null = null;
+  let data: { offset: number; size: number } | null = null;
+  while (offset + 8 <= bytes.length) {
+    const id = text(offset, 4);
+    const size = dv.getUint32(offset + 4, true);
+    if (id === "fmt ") {
+      if (size < 16 || offset + 8 + 16 > bytes.length) return null;
+      fmt = { byteRate: dv.getUint32(offset + 16, true), blockAlign: dv.getUint16(offset + 20, true) };
+    } else if (id === "data") {
+      data = { offset: offset + 8, size };
+    }
+    offset += 8 + size + (size % 2);
+  }
+  if (fmt === null || data === null || fmt.byteRate <= 0) return null;
+  return { byteRate: fmt.byteRate, blockAlign: Math.max(1, fmt.blockAlign), dataOffset: data.offset, dataSize: data.size };
+}
+
+/** 参考超窗时截出窗口内的前缀 wav（改写 RIFF/data 两处 size，帧对齐防半帧） */
+export function truncateWav(bytes: Uint8Array, view: WavView, seconds: number): Uint8Array {
+  const keepBytes = Math.floor((view.byteRate * seconds) / view.blockAlign) * view.blockAlign;
+  const keep = Math.min(keepBytes, view.dataSize);
+  const out = bytes.slice(0, view.dataOffset + keep);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint32(4, out.length - 8, true);
+  dv.setUint32(view.dataOffset - 4, keep, true);
+  return out;
+}
+
+/** 规整产物落点名：default 参考按语言、角色参考按嗓名（角色-变体组合本身唯一，无碰撞面） */
+export function refLabel(voice: string | null, text: string): string {
+  return voice === null || voice === DEFAULT_VOICE_KEY ? `default-${detectTextLang(text)}` : voice;
+}
+
 function assertAudible(samples: Float32Array): void {
   if (samples.length === 0) {
     throw new EngineError("gptsovits 返回空样本");
@@ -158,6 +214,31 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
 
   const ownsVoice = (name: string): boolean => splitVoiceName(host, voicesDir, name) !== null;
 
+  /**
+   * 参考音频窗口规整：GPT-SoVITS 对参考硬拒 3-10s 外（角色素材 10.5-28s 实测被拒，是引擎约束不是资产缺陷）。
+   * 超窗截前缀到 tmp 覆盖复用（同嗓固定名，合成完不清理——同进程多次合成零重复成本）；
+   * 过短（<3s 下限）截无可截，点名窗口抛 EngineError 交回退层，比 shim 侧的英文原文可行动；
+   * 在窗内或非 wav 原路径直传，格式问题留给 shim 报它的精确错。
+   */
+  const withinRefWindow = async (requirement: RefRequirement, label: string): Promise<string> => {
+    let bytes: Uint8Array;
+    try {
+      bytes = await host.readFileBytes(requirement.refAudioPath);
+    } catch {
+      return requirement.refAudioPath;
+    }
+    const view = wavView(bytes);
+    if (view === null) return requirement.refAudioPath;
+    const seconds = view.dataSize / view.byteRate;
+    if (seconds < REF_WINDOW_MIN_S) {
+      throw new EngineError(`gptsovits 参考音频 ${requirement.refAudioPath} 时长 ${seconds.toFixed(2)}s 低于引擎 3s 下限（参考需 3-10s）`);
+    }
+    if (seconds <= REF_WINDOW_MAX_S) return requirement.refAudioPath;
+    const outPath = `${host.tmpDir}/gptsovits-ref-${label}.wav`;
+    await host.writeFile(outPath, truncateWav(bytes, view, REF_TRIM_S));
+    return outPath;
+  };
+
   const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" ? lang : "multi");
 
   return {
@@ -216,10 +297,11 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
         opts.voice === null || opts.voice === DEFAULT_VOICE_KEY
           ? await defaultRequirement(detectTextLang(text))
           : await characterRequirement(opts.voice);
+      const refAudioPath = await withinRefWindow(requirement, refLabel(opts.voice, text));
       const speed = wpmToSpeed(opts.rateWpm);
       const result = await synth({
         text,
-        refAudioPath: requirement.refAudioPath,
+        refAudioPath,
         promptText: requirement.promptText,
         promptLang: requirement.promptLang,
         textLang: detectTextLang(text),

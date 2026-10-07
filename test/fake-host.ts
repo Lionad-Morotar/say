@@ -39,8 +39,8 @@ export interface FakeHostOptions {
   env?: EnvMap;
   pid?: number;
   tmpDir?: string;
-  /** 存在的文件路径 → 内容；未列出的路径视为不存在 */
-  files?: Record<string, string>;
+  /** 存在的文件路径 → 内容；未列出的路径视为不存在。二进制资产（wav 头等）用 Uint8Array 承载 */
+  files?: Record<string, string | Uint8Array>;
   stdin?: string;
   /** 按命令与参数决定子进程结局；未匹配时按 exitCode 默认值 */
   spawnOutcome?: (record: SpawnRecord) => SpawnOutcome;
@@ -153,7 +153,12 @@ export function createFakeHost(options: FakeHostOptions = {}) {
     readFileText: async (p) => {
       const content = files.get(p);
       if (content === undefined) throw new Error(`ENOENT: ${p}`);
-      return content;
+      return typeof content === "string" ? content : new TextDecoder().decode(content);
+    },
+    readFileBytes: async (p) => {
+      const content = files.get(p);
+      if (content === undefined) throw new Error(`ENOENT: ${p}`);
+      return typeof content === "string" ? new TextEncoder().encode(content) : content;
     },
     readStdin: async () => options.stdin ?? "",
     writeFile: async (path, data) => {
