@@ -156,9 +156,10 @@ describe("resolveConfig：flag > env > config > 默认", () => {
   });
 
   describe("voice=default 关键字：按 locale 落 en/zh 内置预设", () => {
-    it("locale=zh 落 zh 预设（zh_baker）", () => {
+    it("locale=zh 落 zh 预设（gptsovits + 中文角色嗓 frieren-zh）", () => {
       const { config, warnings } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
-      expect(config.voice).toBe("zh_baker");
+      expect(config.voice).toBe("frieren-zh");
+      expect(config.engine).toBe("gptsovits");
       expect(warnings).toHaveLength(0);
     });
 
@@ -173,8 +174,8 @@ describe("resolveConfig：flag > env > config > 默认", () => {
     });
 
     it("关键字来自 env 或 config 同样解析，显式层压过预设层不变", () => {
-      expect(resolveConfig({ env: { SAY_VOICE: "default" }, file: null, flags: {}, locale: "zh" }).config.voice).toBe("zh_baker");
-      expect(resolveConfig({ env: {}, file: { voice: "default" }, flags: {}, locale: "zh" }).config.voice).toBe("zh_baker");
+      expect(resolveConfig({ env: { SAY_VOICE: "default" }, file: null, flags: {}, locale: "zh" }).config.voice).toBe("frieren-zh");
+      expect(resolveConfig({ env: {}, file: { voice: "default" }, flags: {}, locale: "zh" }).config.voice).toBe("frieren-zh");
     });
 
     it("default 落的预设是最低层：显式 --engine 与 -v 仍胜出", () => {
@@ -184,12 +185,12 @@ describe("resolveConfig：flag > env > config > 默认", () => {
         flags: { voice: "default", engine: "zipvoice" },
         locale: "zh",
       });
-      expect(config).toMatchObject({ voice: "zh_baker", engine: "zipvoice" });
+      expect(config).toMatchObject({ voice: "frieren-zh", engine: "zipvoice" });
     });
 
-    it("config engine 未设时 default 预设的 engine 生效（当前内置表即 sherpa）", () => {
+    it("config engine 未设时 default 预设的 engine 生效（当前 zh 内置表即 gptsovits）", () => {
       const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
-      expect(config.engine).toBe("sherpa");
+      expect(config.engine).toBe("gptsovits");
     });
 
     it("config voice=default 是显式层，压过更低层的预设 voice（config > preset 层序不变）", () => {
@@ -199,7 +200,7 @@ describe("resolveConfig：flag > env > config > 默认", () => {
         flags: {},
         locale: "zh",
       });
-      expect(config.voice).toBe("zh_baker");
+      expect(config.voice).toBe("frieren-zh");
     });
 
     it("关键字也能从预设层给出：preset voice=default × locale 落对应预设", () => {
@@ -209,7 +210,7 @@ describe("resolveConfig：flag > env > config > 默认", () => {
         flags: {},
         locale: "zh",
       });
-      expect(config.voice).toBe("zh_baker");
+      expect(config.voice).toBe("frieren-zh");
     });
 
     it("frieren/dva 是角色嗓名字，config 层原样透传不解析", () => {

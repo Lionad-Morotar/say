@@ -24,9 +24,9 @@ describe("parseConfigFile：预设分节与选择键", () => {
 });
 
 describe("内置通用嗓预设", () => {
-  it("通用 en 与 zh 预设各 ≥1：en 走 kokoro 默认嗓，zh 走 matcha 最快嗓", () => {
+  it("en 走 kokoro 默认嗓（v1 链不倒退），zh 走 gptsovits + 中文角色嗓（S8 默认裁决）", () => {
     expect(BUILTIN_PRESETS.en).toEqual({ voice: "af_maple", engine: "sherpa" });
-    expect(BUILTIN_PRESETS.zh).toEqual({ voice: "zh_baker", engine: "sherpa" });
+    expect(BUILTIN_PRESETS.zh).toEqual({ voice: "frieren-zh", engine: "gptsovits" });
   });
 });
 
@@ -81,7 +81,7 @@ describe("resolveConfig 预设机制", () => {
     const { config: en } = resolveConfig({ env: { SAY_PRESET: "en" }, file: null, flags: {} });
     expect(en).toMatchObject({ engine: "sherpa", voice: "af_maple" });
     const { config: zh } = resolveConfig({ env: {}, file: null, flags: { preset: "zh" } });
-    expect(zh).toMatchObject({ engine: "sherpa", voice: "zh_baker" });
+    expect(zh).toMatchObject({ engine: "gptsovits", voice: "frieren-zh" });
   });
 
   it("未登记的预设名降级并警告，警告点名可用清单", () => {

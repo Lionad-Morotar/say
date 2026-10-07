@@ -175,7 +175,7 @@ describe("配置三层优先级", () => {
       ["hi"],
     );
     const args = spawns.find((s) => s.cmd === "/usr/bin/say")?.args ?? [];
-    expect(args[args.indexOf("-v") + 1]).toBe("zh_baker");
+    expect(args[args.indexOf("-v") + 1]).toBe("frieren-zh");
   });
 
   it("engine ls 经 run() 分派到管理子命令，不触合成链", async () => {
