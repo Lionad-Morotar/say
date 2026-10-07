@@ -44,6 +44,14 @@ export interface SpeakOptions {
 export interface EngineAdapter {
   readonly name: string;
   /**
+   * 引擎内流式合成能力位（S4 起，VoxCPM 先行）：引擎可在单块文本内边合成边产出
+   * PCM 块——开口时间从整句合成完提前到首块就绪（实测 0.2-0.5s 量级）。
+   * 声明即承诺：迭代按到达序给出连续音频段，失败以 EngineError 抛出
+   * （首块之前抛 = 整体失败；首块之后抛 = 部分已交付，编排层按此分笔回退语义）。
+   * 落盘模式不感知此能力（交付物语义要求完整文件），仍走 speak()。
+   */
+  speakStreaming?(text: string, opts: SpeakOptions): AsyncIterable<Extract<AudioOut, { type: "pcm" }>>;
+  /**
    * 引擎能否把产出交回编排层拼接。分块只对这样的引擎有意义：
    * 进程内推理返回裸样本，块与块可以拼成一段连续音频，也能边合成边播；
    * 自己写盘或直推声卡的引擎，块与块之间无从拼接，切开只会多出边界停顿。

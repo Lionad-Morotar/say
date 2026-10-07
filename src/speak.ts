@@ -110,8 +110,10 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
   const delivery: Delivery = { target, temp, staging: stagingPath(host, chunks.length > 1 ? 0 : null) };
   const ctx: SpeakContext = { deps, config, opts, delivery, timing, fullText: text };
 
+  // 出声卡模式下流式引擎单块也走编排路径：引擎内流式的开口收益恰恰在单句场景最大
+  const streamEligible = engine !== undefined && engine.speakStreaming !== undefined && target === null;
   const outcome =
-    engine !== undefined && chunks.length > 1
+    engine !== undefined && (chunks.length > 1 || streamEligible)
       ? await speakChunked(ctx, engine, chunks)
       : await speakOnce(ctx, engine, chunks[0] ?? text);
 

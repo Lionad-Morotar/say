@@ -13,7 +13,7 @@ const SAY = "/usr/bin/say";
 const CONFIG = "/h/.config/say/config.toml";
 const NODE_BIN = process.execPath;
 
-/** install-engine status --json 的产物形态（S1 契约），gptsovits 已装、voxcpm 未装 */
+/** install-engine status --json 的产物形态（S1 契约），gptsovits 已装、voxcpm 未装、firered 登记（S4 起前两者已接线） */
 const LAB_JSON = JSON.stringify({
   labRoot: "/h/.local/share/say-lab",
   engines: [
@@ -23,6 +23,14 @@ const LAB_JSON = JSON.stringify({
       status: "missing",
       venv: "missing",
       missing: ["models/model.safetensors"],
+      autoPending: [],
+      patchStatus: null,
+    },
+    {
+      engine: "firered",
+      status: "missing",
+      venv: "missing",
+      missing: ["models/FireRedTTS3/fireredtts3_base/model.safetensors"],
       autoPending: [],
       patchStatus: null,
     },
@@ -77,8 +85,10 @@ describe("engine ls：已接线引擎与 say-lab 安装状态", () => {
     expect(out).toContain("zipvoice");
     expect(out).toContain("system");
     expect(out).toMatch(/gptsovits\s+wired/);
-    expect(out).toMatch(/voxcpm\s+lab:missing/);
+    // voxcpm S4 起接线：wired 让位 lab 状态的规则不变，只是名字换了
+    expect(out).toMatch(/voxcpm\s+wired/);
     expect(out).not.toMatch(/gptsovits\s+.*lab:/);
+    expect(out).not.toMatch(/voxcpm\s+.*lab:/);
   });
 
   it("config 声明的当前引擎标 *，未声明时标默认 sherpa", async () => {
@@ -171,9 +181,9 @@ describe("engine use：行级手术写 config 默认引擎", () => {
     expect(fake.stderr.join("")).toContain("gptsovits");
   });
 
-  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链（gptsovits 已接线 S3，示例换 voxcpm）", async () => {
+  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链（gptsovits/voxcpm 已接线，示例换 firered）", async () => {
     const fake = setup();
-    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "voxcpm" });
+    const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "firered" });
     expect(code).toBe(0);
     expect(fake.stderr.join("")).toContain("尚未接线");
   });
