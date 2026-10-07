@@ -178,7 +178,7 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
       const missing = gptsovitsMissingAssets(spec, host);
       if (missing.length > 0) {
         const names = missing.map((file) => file.slice(spec.labDir.length + 1)).join(", ");
-        return { ok: false, reason: `${spec.labDir} 缺少 ${names.length} 项：${names}（先跑 scripts/install-engine.mjs gptsovits）` };
+        return { ok: false, reason: `${spec.labDir} 缺少 ${missing.length} 项：${names}（先跑 scripts/install-engine.mjs gptsovits）` };
       }
       try {
         if (voice === null || voice === DEFAULT_VOICE_KEY) {
