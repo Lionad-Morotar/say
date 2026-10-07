@@ -16,6 +16,9 @@
 | shadow | 经 `~/.local/bin/say` 符号链接在 PATH 上接管系统 say 的机制 | hijack、override |
 | 流水（streaming） | 长文按句边界分块：播块 i 时合成块 i+1，首包出声先于整段完成 | chunked playback |
 | 引擎三态 | sherpa（神经多语）/ zipvoice（角色克隆）/ system（回退与透传目标）三执行后端 | provider |
+| 常驻（daemon） | 跨 CLI 调用保活的引擎服务进程，权重与设备初始化留在内存中持续服役；与 per-call（一次调用一个 shim 进程）相对 | server、service |
+| 温态（warm）/ 冷启动（cold） | 温态指权重已在内存、请求直达推理；冷启动指从零到可推理的全过程（spawn、import、权重加载、设备初始化） | hot、loaded |
+| 闲置收割（idle reap） | daemon 持续无请求达阈值后自行退出归还内存，下次调用重新冷启动 | timeout kill |
 | 出声即 exit 0 | 回退语义的验收锚点：只要用户听到了声音，进程就必须成功退出 | silent success |
 
 ## 架构决策记录
