@@ -35,6 +35,7 @@ import json
 import os
 import sys
 import traceback
+import wave
 
 
 def main() -> int:
@@ -67,7 +68,27 @@ def main() -> int:
         emit({"type": "fatal", "message": f"{type(e).__name__}: {e}"})
         return 1
 
-    import torchaudio
+    import numpy as np
+    import torch
+
+    def load_wav_tensor(path: str):
+        """wav → (float32 tensor (1,T), sr)。torchaudio.load 的零后端替身：
+        torchaudio 2.8 的 macOS wheel 不带 IO 后端（list_audio_backends 为空），
+        soundfile 也不在引擎依赖面；参考音频恒为 16bit PCM wav（音源规范），
+        标准库 wave + numpy 覆盖，多声道折单声道（gradio demo 同款动作）。
+        引擎内部的 resample 走 torchaudio.functional（纯 tensor 运算，无后端依赖）。
+        """
+        with wave.open(path, "rb") as w:
+            sr = w.getframerate()
+            channels = w.getnchannels()
+            width = w.getsampwidth()
+            raw = w.readframes(w.getnframes())
+        if width != 2:
+            raise ValueError(f"unsupported wav sample width: {width * 8}bit（参考音频预期 16bit PCM）")
+        samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+        if channels > 1:
+            samples = samples.reshape(-1, channels).mean(axis=1)
+        return torch.from_numpy(samples).unsqueeze(0), sr
 
     # 协议 text_lang（zh/en）→ FireRed 白名单 tag（MULTI_LANG_TAGS 首字母大写全称）；
     # 白名单外断言崩进程，映射表钉死两项与 Node 侧 detectTextLang 的产出域对齐
@@ -96,9 +117,8 @@ def main() -> int:
             language = LANG_TAGS.get(req.get("text_lang") or "zh")
             if language is None:
                 raise ValueError(f"unsupported text_lang: {req.get('text_lang')}")
-            # 参考音频多声道折单声道（gradio demo 同款动作），sr 由 torchaudio 实测透出
-            wav, sr = torchaudio.load(ref)
-            wav = wav.mean(dim=0, keepdim=True)
+            # 参考音频由 shim 加载为 tensor（零后端替身），sr 实测透出
+            wav, sr = load_wav_tensor(ref)
             gen_audio, gen_sr = model.generate(
                 text,
                 language=language,
@@ -108,8 +128,6 @@ def main() -> int:
             )
             # float32 → int16 LE（协议面契约）：先夹 [-1,1] 再缩放，codec 偶发 overshoot 的
             # 超幅样本不 clip 会按模 2^16 回绕成满幅反向爆音（astype 是回绕不是饱和）
-            import numpy as np
-
             samples = (np.clip(gen_audio.squeeze(0).detach().cpu().numpy(), -1.0, 1.0) * 32767.0).astype("<i2").reshape(-1)
             emit({
                 "type": "audio",
