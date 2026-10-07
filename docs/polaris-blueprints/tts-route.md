@@ -1,4 +1,4 @@
-# epic 蓝图：tts-route（状态：定稿 v4，Gate 审查已裁决）
+# epic 蓝图：tts-route（状态：定稿 v5，engine-v2 回写修订 D10/F3/F4）
 
 > 迷雾型 epic 蓝图。目标：为「好听的 agent 说话体验」钉死技术路线与切片清单，替代 macOS `say`。
 > 方向由用户原话指定（路线偏好：drop-in alias > 现成 CLI > 套壳自建 > 从头自研），本次选向无发散（如实记录，见决策日志 D1）。
@@ -171,7 +171,7 @@ say/
 * D7：引擎选型走基准测试裁决制：sherpa-onnx 为工程底座（通用音色 + ZipVoice 克隆同宿主），mlx+Qwen3-TTS 为中文质量挑战者（en-first 后权重下调）；s-bench 裁通用引擎延迟/质量，克隆质量归属裁决在 s-voice（真实素材后，Gate 发现 2）。**s-bench 已落地**：工程底座确定 = sherpa-onnx Node 绑定（六格可行性全验证，延迟数据见事实底座）；mlx-qwen3 延迟与 kokoro 同档但体量 1.9GB 且 zh 热态 MARGINAL——挑战者身份保留、不默认接线；默认嗓候选 = zipvoice 克隆嗓（若 s-voice 相似度获用户认可，短句热 2.4-2.6s 在预算内）或 kokoro en 嗓（通用兜底，en-short 热 1.59s 最快）
 * D8：失败回退 /usr/bin/say，出声即 exit 0；并发无锁混叠（Q6）
 * D9：实现栈 Node + 引擎适配器 + 执行器三态接口；sherpa-onnx-node 可行性按模型×通道矩阵由 s-bench 验证，退路 spawn C++ 二进制（Q7，Gate 发现 4）
-* D10：语言策略——说话语言默认英语（用户明确指令），中文同嗓直读、混合短句质量 s-bench 实测；不达标则中文走通用 zh 预设（角色嗓缺席中文流量 = 用户指令下既定取舍）；音色级路由经预设配置具备，不做引擎级自动检测（Q10，Gate 发现 1 修订）
+* D10：语言策略（v2 修订，2026-10-07）——**中文升为默认体验底线**：默认引擎必须中文好、英语质量不倒退（推翻「英语为主」原判，2026-10-06 会话钉定；原判系用户 2026-09-19 指令「使用英语而不是中文，除非中文音色非常完美」，被引擎层 v2 effort 以四引擎实测推翻——GPT-SoVITS v2 CPU 档 zh 热 2.41-2.75s PASS 达标中文底线，默认链经 locale 自动默认：AppleLanguages 优先、LANG 兜底、缺省 en）。文本级自动路由维持否决；音色级路由经预设配置具备（Q10）
 * D11：角色克隆 v1 路线 = ZipVoice 零样本（本地 CPU、sherpa 同宿主）；素材工程标准 = 干音 + 精确转写 + meta 溯源，存 `~/.local/share/say/voices/`；升级阶梯 GPT-SoVITS 微调 → ElevenLabs 云 → IndexTTS-2.5 情绪版，各留雾区触发条件；素材仅取官方公开语音、本机个人使用、不再分发（Q9，Gate 发现 3 修订）
 * D12：决策呈现规范（源自用户流程补充）——Polaris 级决策以完备上下文呈现：HTML 决策简报（架构图 + 内嵌试听播放器 + 选项与推荐 + 高风险台账），不使用裸 Ask 快问；本 epic 三个用户抉择点见「分期切片」节。flow-polaris 技能优化建议已登记，epic 收尾时与用户确认后落技能
 * D13：配置优先级 flag > env > config——CLI 通行惯例；Gate 发现 9 指出原 env 优先无反直觉场景辩护理由，反转
@@ -193,14 +193,14 @@ say/
 * 「KittenTTS / Dia / OuteTTS」：无中文（且克隆能力缺失）
 * 「v1 即上 GPT-SoVITS/IndexTTS-2.5 重克隆」：训练/GPU/许可成本与「即席短句说话」场景错配，留雾区 F3/F4 按触发升级（F3 触发即部署形态跃迁，代价已标注）
 * 「引擎级自动语言检测路由」：复杂度不值；音色级路由经预设配置化具备（Q10）
-* 「中文为主语言」：用户补充明确英语优先，中文仅质量达标时启用（D10）
+* 「中文为主语言」（蓝图期）：v1 蓝图期用户补充明确英语优先、中文仅质量达标时启用；被 engine-v2 推翻——四引擎实测中文达标引擎存在（GPT-SoVITS v2），中文升为默认体验底线（D10 v2 修订），「中文不达标」的前提不再成立
 
 ## 遗留与雾区
 
 * F1 系统 Enhanced/Premium 音色：GUI 手动下载（两种入口说法待验），触发条件 = 用户试听基线样本后想对比，或全线失败时的零代码保底
 * F2 守护进程/warm daemon 模式：执行器三态接口已预留（D9），触发只增实现。**s-bench 已正式触发条件**（kokoro en-long 冷 11.1s、zipvoice en-long 冷 15.2s 均 >10s；spawn 通道热态全线 >3s）——但 v1 处置为「规范化层分块 + 顺序合成流水播放」：agent 主场景是短句（hot 1.6-2.6s 达标），长文本经分块后首包出声 <3s，体验目标即可达成；daemon 延后至分块流水仍不满足体验时实施（gensay daemon 与 sherpa 官方 server 建议为设计参照），实施时 kokoro/zipvoice 的 spawn 热态超标格全部转 PASS 预期
-* F3 克隆质量升级——GPT-SoVITS 少样本微调：触发条件 = s-voice 三角色 ZipVoice 零样本相似度用户试听不认可（尤其 Frieren 跨语种克隆失败时）；触发即部署形态跃迁（重服务化、训练管线），代价显式告知用户后再动
-* F4 情绪表现力引擎（IndexTTS-2.5 / Qwen3-TTS 情绪面）：触发条件 = 语气预设（D5）被用户判定不够
+* F3 克隆质量升级——GPT-SoVITS 少样本微调：**已开启（engine-v2 S1-S9 落地，2026-10-07）**——GPT-SoVITS 已全接线为默认引擎，角色资产（ref.wav/ref.txt/meta.json）一比一映射，微调全链自动化（打标管线三环节真跑 PASS）使本地微调从雾区变为现实路径；触发条件不变（角色相似度用户试听不认可），触发即增量——训练管线独立于 shim 交付面、不进 say 主仓，部署形态不再跃迁（api_v2 常驻形态已就位）
+* F4 情绪表现力引擎（IndexTTS-2.5 / Qwen3-TTS 情绪面）：**已开启（engine-v2 落地，2026-10-07）**——IndexTTS 2.5 已接线为可切换引擎，emo_alpha 情感面预留、duration_factor 语速参数透出（-r 映射），情绪能力从雾区项变为 config 一行即可启用的现成面；触发条件不变（语气预设 D5 被用户判定不够），另 Qwen3-TTS 情绪面维持观察（mlx-qwen3 参照系不接线）
 * F5 云预设（ElevenLabs 角色克隆 / edge-tts / sag）：触发条件 = 用户明确要求质量天花板且接受联网/付费，作为 config 可选 engine 接入；亦为 D14 降级出口的升级选项之一
 * F6 跨机分发（npm 发布 / brew tap）：触发条件 = 用户想在其他机器使用
 * F7 中文克隆音质：触发条件 = 用户提出中文说话需求且 ZipVoice zh 试听不达标，评估 Qwen3-TTS/edge-tts zh 预设

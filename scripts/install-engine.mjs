@@ -4,7 +4,7 @@
 // 幂等语义：venv 在则跳过创建、权重 sha256 已对则跳过下载、patch 已应用则跳过——重复执行只补缺失部分。
 // 代理透传 = 子进程继承本进程 env；网络约定（上海）：HF_ENDPOINT 镜像 fallback 由通道表承载，代理 env 交给用户 shell。
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ENGINES, ENGINE_IDS, sayLabRoot, engineDir, UV_INDEX } from "./lib/engine-manifest.mjs";
 import { downloadAsset, sizeMatches } from "./lib/engine-channels.mjs";
@@ -131,7 +131,10 @@ async function ensureWeight(dir, w) {
     const targs = isZip ? ["-q", "-o", staging, "-d", dest] : ["xzf", staging, "-C", dest];
     const x = spawnSync(tool, targs, { encoding: "utf8", timeout: 30 * 60 * 1000 });
     if (x.status !== 0) return { action: "extract-failed", file: w.file, stderr: (x.stderr ?? "").slice(-200) };
-    if (w.archive.strip > 0) stripDir(dest, w.archive.strip);
+    // 折叠失败（含「无需折叠」之外的异常态）不写完成标记：半吊布局流入 status 会假 ready（判据锚 marker）
+    if (w.archive.strip > 0 && !stripDir(dest, w.archive.strip)) {
+      return { action: "extract-failed", file: w.file, stderr: "strip 折叠未完成" };
+    }
     writeFileSync(path.join(dest, ".install-ok"), new Date().toISOString());
     rmSync(staging, { force: true });
   } else {
@@ -142,16 +145,31 @@ async function ensureWeight(dir, w) {
   return { action: "installed", channel: r.channel, verified: r.verified };
 }
 
-/** zip 解压后的顶层目录折叠（strip=1：pretrained_models/xxx → xxx） */
+/** zip 解压后的顶层目录折叠（strip=1：pretrained_models/xxx → xxx）；返回 false = 折叠未发生或失败（调用方据此不写就绪标记） */
 function stripDir(dest, levels) {
   let cur = dest;
   for (let i = 0; i < levels; i++) {
     const entries = readdirSafe(cur);
-    if (entries.length !== 1) return;
-    cur = path.join(cur, entries[0]);
+    const dirs = entries.filter((e) => {
+      try {
+        return statSync(path.join(cur, e)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    // 折叠判据 = 恰一个子目录（散文件并存不阻塞）：nltk cmudict zip 顶层是「目录 + README」
+    // 混合形态，按恒等条目数判据会漏折叠留下双层同名目录
+    if (entries.length === 0 || dirs.length !== 1) return false;
+    cur = path.join(cur, dirs[0]);
   }
-  if (cur === dest) return;
-  spawnSync("bash", ["-c", `shopt -s dotglob; mv "${cur}"/* "${dest}"/ && rmdir "${cur}"`], { encoding: "utf8" });
+  if (cur === dest) return true;
+  // 顶层同名目录类 zip（nltk cmudict 家族：折叠目录自身名与内容项同名）先把 cur 挪走再折叠——
+  // 否则 mv 内容项到 dest 时撞上 cur 本身（目标同名目录存在，BSD mv 报 Is a directory）
+  const parked = `${cur}.__fold`;
+  const moved = spawnSync("mv", [cur, parked], { encoding: "utf8" });
+  if (moved.status !== 0) return false;
+  const folded = spawnSync("bash", ["-c", `shopt -s dotglob; mv "${parked}"/* "${dest}"/ && rmdir "${parked}"`], { encoding: "utf8" });
+  return folded.status === 0;
 }
 
 function readdirSafe(d) {

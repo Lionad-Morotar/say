@@ -31,7 +31,7 @@ const FRIEREN_META = JSON.stringify({
   variants: { en: { language: "en" }, zh: { language: "zh" } },
 });
 
-/** 安装面五件套（venv + 内核 + 两份解压资产 + open_jtalk 字典的 .install-ok）在盘的基线环境 */
+/** 安装面八件套（venv + 内核 + 两份解压资产 + open_jtalk 字典 + NLTK 数据三件的 .install-ok）在盘的基线环境 */
 function makeFiles(extra: Record<string, string | Uint8Array> = {}): Record<string, string | Uint8Array> {
   return {
     [`${LAB}/venv/bin/python`]: "",
@@ -39,6 +39,9 @@ function makeFiles(extra: Record<string, string | Uint8Array> = {}): Record<stri
     [`${REPO}/GPT_SoVITS/pretrained_models/.install-ok`]: "",
     [`${REPO}/GPT_SoVITS/text/G2PWModel/.install-ok`]: "",
     [`${LAB}/open_jtalk_dic_utf_8-1.11/.install-ok`]: "",
+    [`${LAB}/venv/nltk_data/tokenizers/punkt_tab/.install-ok`]: "",
+    [`${LAB}/venv/nltk_data/taggers/averaged_perceptron_tagger_eng/.install-ok`]: "",
+    [`${LAB}/venv/nltk_data/corpora/cmudict/.install-ok`]: "",
     [`${VOICES}/frieren/meta.json`]: FRIEREN_META,
     [`${VOICES}/frieren/ref.wav`]: "",
     [`${VOICES}/frieren/ref.txt`]: "frieren transcript line\n# 转写来源: some-provenance\n",
@@ -139,13 +142,25 @@ function makeEngine(
 }
 
 describe("gptsovits 安装面判据", () => {
-  it("五件套齐全时 missing 为空", () => {
+  it("八件套齐全时 missing 为空", () => {
     const fake = createFakeHost({ env: { HOME: "/h" }, files: makeFiles() });
     const missing = gptsovitsMissingAssets(
       { labDir: LAB, repoDir: REPO, pythonPath: `${LAB}/venv/bin/python`, shimPath: SHIM },
       fake.host,
     );
     expect(missing).toEqual([]);
+  });
+
+  it("NLTK 数据件缺失按缺项报：英文路径的 LookupError 不能拖到推理期才失败", () => {
+    const files = makeFiles();
+    delete files[`${LAB}/venv/nltk_data/corpora/cmudict/.install-ok`];
+    const fake = createFakeHost({ env: { HOME: "/h" }, files });
+    const missing = gptsovitsMissingAssets(
+      { labDir: LAB, repoDir: REPO, pythonPath: `${LAB}/venv/bin/python`, shimPath: SHIM },
+      fake.host,
+    );
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toContain("nltk_data/corpora/cmudict/.install-ok");
   });
 
   it("open_jtalk 字典的 .install-ok 缺失按缺项报：ja 文本不能拖到推理期才失败", () => {
