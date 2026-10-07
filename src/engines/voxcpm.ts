@@ -155,7 +155,7 @@ export function createVoxcpmEngine(options: VoxcpmEngineOptions): EngineAdapter 
       const missing = voxcpmMissingAssets(spec, host);
       if (missing.length > 0) {
         const names = missing.map((file) => file.slice(spec.labDir.length + 1)).join(", ");
-        return { ok: false, reason: `${spec.labDir} 缺少 ${names.length} 项：${names}（先跑 scripts/install-engine.mjs voxcpm）` };
+        return { ok: false, reason: `${spec.labDir} 缺少 ${missing.length} 项：${names}（先跑 scripts/install-engine.mjs voxcpm）` };
       }
       try {
         if (voice !== null && voice !== DEFAULT_VOICE_KEY) await resolveCharacterVoice(host, voicesDir, voice);

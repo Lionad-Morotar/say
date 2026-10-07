@@ -30,8 +30,10 @@
 | `text_lang` | 合成文本语言，**Node 侧自判**（中英字符占比 heuristic，与 `prompt_lang` 的 default 参考判定同源）。不用引擎侧 `"auto"`：其对短中文文本会误判 ja（fast_langdetect 汉字共享缺陷），误判即用日文音素读中文 |
 | `speed_factor` | 语速倍率（1.0 = 原速；say 侧 wpm→倍率换算后传入） |
 | `control`（可选） | 引擎侧自然语言控制指令（S4 起，VoxCPM voice creation 首个消费方）。语义由 shim 定义：VoxCPM shim 把它拼成 `(指令)正文` 的括号前缀（control 与文本同通道、无独立参数位的引擎形态）；不出声的 shim 忽略此字段。Node 侧不发默认值——无指令时字段缺席 |
+| `duration_factor`（可选） | 时长倍率（S5 起，IndexTTS 消费）：值越大音频越长、语速越慢，1.0 = 原速，合法域 0.5-2.0（与 `speed_factor` 的语速倍率互为倒数——语义反向，故独立字段不复用）。Node 侧由 `-r`（wpm）换算：`1 / wpmToSpeed(rateWpm)`，wpm 锚点与 clamp 域跨引擎同源。缺席 = 引擎默认 1.0 |
+| `emo_alpha`（可选） | 情感强度预留（S5 起，IndexTTS 语义域 0-1）：需与引擎侧情感参考配对才生效，缺席 = 纯说话人克隆无情感引导。一期 adapter 不发送（emo 参考链路合成耗时翻倍，默认情感面归试听简报后裁决），协议面先钉位 |
 
-字段名与 GPT-SoVITS api_v2 `/tts` 一比一同名，排障时两形态直接对照。其他引擎复用时字段语义不变；引擎特有参数（如 IndexTTS 的 duration_factor）作为**新增可选字段**追加，不得复用既有字段名。
+字段名与 GPT-SoVITS api_v2 `/tts` 一比一同名，排障时两形态直接对照。其他引擎复用时字段语义不变；引擎特有参数（如 IndexTTS 的 duration_factor、emo_alpha）作为**新增可选字段**追加，不得复用既有字段名。
 
 ### 2. 音频块（shim → Node）
 

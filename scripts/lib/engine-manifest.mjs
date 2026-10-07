@@ -127,6 +127,10 @@ const INDEXTTS = {
     // 预热可省首跑下载等待，但缺失不判 partial——引擎侧 fallback 链实测可用。
     { file: "checkpoints/hf_cache/facebook/w2v-bert-2.0/model.safetensors", size: 4600000000, sha256: "", sources: [hf("facebook/w2v-bert-2.0", "model.safetensors")], tier: "auto" },
     { file: "checkpoints/hf_cache/nvidia/bigvgan_v2_22khz_80band_256x/bigvgan_generator.pt", size: 449000000, sha256: "", sources: [hf("nvidia/bigvgan_v2_22khz_80band_256x", "bigvgan_generator.pt")], tier: "auto" },
+    // default 嗓参考（S5）：上游已把示例音频移出版本库改按需下载（repo .gitattributes 注记），
+    // 浅克隆不含此件——say 的 default 参考取它，缺了引擎装得齐也出不了 default 声，故进主权重面。
+    // 源在 HF Spaces（ModelScope 侧无 models 仓直链形态），单通道 hf-mirror。
+    { file: "index-tts/examples/voice_01.wav", size: 478050, sha256: "e33e6ee0107a1dd58e1d66dd90c13df3d55a8683047cc3d7ea206dad84ed3fc8", sources: [hf("spaces/IndexTeam/IndexTTS-2-Demo", "examples/voice_01.wav")] },
   ],
   patches: [],
 };
