@@ -3,6 +3,7 @@ import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
 import { DaemonSession, DaemonUnavailableError, GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 
 /** say-lab 引擎安装面（路径判据与 scripts/lib/engine-status.mjs 同构） */
 export interface GptsovitsLabSpec {
@@ -113,6 +114,14 @@ export function createShimSynth(spec: GptsovitsLabSpec, host: Host): GptsovitsSy
  *  engineVersion 与 shim 构造 TTS_Config 钉死的 version 同源。不符 = 过期 daemon → kill 重拉一次 */
 const DAEMON_PROTOCOL_VERSION = "2";
 const DAEMON_ENGINE_VERSION = "v2";
+
+/**
+ * 队满拒转的 message 前缀：daemon 侧单飞队列上限 4，第 5 路在途请求收到携带该 message 的 error 帧。
+ * 这是容量事件不是请求失败——TS 侧按前缀识别后归入基础设施失败（降级 per-call 重放、daemon 不判死、
+ * 不进熔断计数），与引擎级 error 帧（重放必复现）分流。message 是跨语言契约，
+ * 与 shim 的 QUEUE_FULL_MESSAGE 由源文本对拍测试钉死（shim-daemon.test.ts）。
+ */
+export const DAEMON_QUEUE_FULL_MESSAGE = "daemon queue full";
 /** 闲置收割阈值（分钟）：burst 期间常驻保热、久置回收内存；由 shim daemon 自计时自退 */
 const DAEMON_IDLE_MINUTES = 15;
 
@@ -135,10 +144,13 @@ export interface GptsovitsDaemonTuning {
  *   且 per-call 形态报出的原因与 daemon 相同，重放只白付一次冷启动）。
  */
 export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning: GptsovitsDaemonTuning = {}): GptsovitsSynth {
+  // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
+  const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
+    circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
     spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
     expectedVersionKey: () => ({
@@ -164,11 +176,23 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
       const msg = parseLine(line);
       if (msg === null) continue; // 杂散行（引擎库噪音进 socket 的既有形态）：丢弃面与 per-call 一致
       if (msg.type === "fatal") throw new EngineError(`${ENGINE_LABEL} 引擎致命错误：${msg.message}`);
-      if (msg.type === "error" && msg.id === id) throw new EngineError(`${ENGINE_LABEL} 合成失败：${msg.message}`);
+      if (msg.type === "error" && msg.id === id) {
+        // 队满拒转与引擎级失败分流：前者是容量瞬态（换个进程立即能跑），归基础设施失败降级 per-call；
+        // 后者同一请求重放必复现，直报不降级。判据用 shim 的固定 message 前缀，跨语言由对拍测试钉死。
+        if (msg.message.startsWith(DAEMON_QUEUE_FULL_MESSAGE)) {
+          throw new DaemonUnavailableError(`${ENGINE_LABEL} 常驻队列已满拒转（${msg.message}）`);
+        }
+        throw new EngineError(`${ENGINE_LABEL} 合成失败：${msg.message}`);
+      }
       if (msg.type === "audio" && msg.id === id) {
         chunks.push(decodePcm(msg.pcm));
         sampleRate = msg.sampleRate;
-        if (msg.done) return { samples: concatSamples(chunks), sampleRate };
+        if (msg.done) {
+          // 一次成功的温态合成 = daemon 健康的最强证据：劣化史清零（票 04 熔断回收判据）。
+          // 只在 done 终结帧清：半截流/引擎级 error 都不算 daemon 恢复了
+          clearCircuitFailures(circuit);
+          return { samples: concatSamples(chunks), sampleRate };
+        }
       }
     }
     // EOF/超时由 request 传输层抛 DaemonUnavailableError；走到这里是 done 前流自然终结的异常形态

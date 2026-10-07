@@ -88,10 +88,13 @@ daemon 常驻形态的 ready 额外携带**握手版本键**（per-call 形态�
 
 - **进程形态**：Node 宿主 spawn shim（`<venv python> <shim.py> --repo <引擎仓库根>`），per-call 常驻——一次 CLI 调用内 N 次合成复用同一进程（首块付冷启动，后续热态），调用结束随宿主进程收尾。
 - **常驻形态（daemon，gptsovits 先行）**：`--daemon [--idle-minutes N]` 拉起，bind `<lab>/daemon.sock` 先于模型加载（加载期连接排队等待，就绪广播 ready），冷启动整个 burst 只付一次、跨 CLI 调用复用。帧面与 per-call 逐字一致，仅传输换成 socket；daemon 的 ready 必携带握手版本键（见上节）。bind 成功即自写 `<lab>/daemon.pid`（getpid）——unix socket 拿不到对端 pid，这是 Node 侧 kill 过期 daemon 的唯一句柄；stdio 启动即重定向 `<lab>/daemon.log`（拉起方 CLI 随时退出会关闭继承管道，引擎写死管道即死），协议帧不占 stdio。
-- **bind 竞态裁决（基础形态）**：EADDRINUSE 时探针 connect 既有 sock——可连 = 活体已在位，本次拉起判负 exit 3（绝不动赢家的 sock/pid）；不可连 = 僵死残file，清掉重 bind。多 CLI 同时 lazy 拉起的「输家等赢家就绪」的完整竞态仲裁归后续完善。
+- **bind 竞态裁决（完整仲裁）**：EADDRINUSE 时探针 connect 既有 sock——可连 = 活体已在位，本次拉起判负 exit 3（绝不动赢家的 sock/pid）；不可连 = 僵死残file，清掉重 bind，二次 EADDRINUSE（unlink-rebind 窗口刚被他人接管）同样 exit 3 判负——陈旧文件不能赢过在位者。Node 侧输家观察到 exit 3 后转 connect 轮询等赢家 ready（上限 = 加载窗 120s），成功即转温路径复用；等待超时判降级且不做破坏面（不 kill、不 unlink 他人残file）。「sock 可连先于 exit 3 观察到」的交叠窗口：握手失败处置期补观察一次 spawn 句柄，退出码若为 3 即改走 pid 文件归属核对，防空杀已退句柄、误 unlink 赢家注册点。
+- **既有 daemon 的加载宽限窗**：bind 先于加载使「加载中赢家」与「僵死 daemon」在握手面不可分辨（都可连、ready 都迟到）。warm 直连 5s 初判未 ready 不即 kill：以 `<lab>/daemon.pid` 的 mtime 年龄判加载窗（`readyTimeout` 120s 内 = 可能还在加载，同连接宽限续等），窗尽仍无 ready 才进 kill + 重拉。pid 文件缺失或年龄超窗维持僵死语义。
 - **daemon 生命周期**：闲置收割由 daemon 自计时自退（无请求、队列排空且无在位连接超阈）；SIGTERM 与 `shutdown` 帧优雅自退；两者退出均清 sock/pid。宿主 CLI 退出不收走 daemon（自持文件与信号生命周期）。Node 侧连接断开、ready 不符、请求超时等**基础设施失败**降级 per-call 重放同一请求（本次调用内不再重试 daemon，新调用自然重触）；`error`/`fatal` 帧是**引擎级确定性失败**，不降级重放（同一请求 per-call 必复现，重放白付进程成本）。
+- **故障熔断（跨 CLI 进程经文件会合）**：daemon 形态的基础设施失败（拉起/握手/在途）收敛计数进 `<lab>/daemon-failures`（JSON `{count,lastAt,openedAt}`，tmp+rename 原子写）。滑动窗 10min 内累计 3 次开冷却闸：冷却期会话入口直拒 daemon 路径（连健康 daemon 都不复用、不 spawn、跳过不计数），请求直接 per-call；10min 到期自动放行一次重试。一次成功的温态合成（done 帧）删文件清零。文件损坏/不可读写判「闭合」放行——熔断器误闸拦路比漏闸更伤；计数尽力而为，多 CLI 竞态丢一次只影响开窗时机。
+- **SAY_DAEMON 逃生门**：`off` = 装配点根本不接 daemon 会话，合成退回 per-call 单形态（健康 daemon 在位也不连，与 daemon 上线前行为同形），off 不是失败、不进熔断；`on`/缺席/空串 = daemon-first 缺省；其它值按 on 处理并 stderr 警告（环境层坏值降级哲学：一个 typo 不该砍掉出声下限）。`[daemon]` 配置节与 flag>env>config 完整优先级归后续切片。
 - **收尾**：Node 关闭 stdin（EOF）即 shim 优雅退出；SIGTERM/SIGKILL 同样终止。无显式握手关停协议。
-- **并发**：请求可并发下发但 shim 侧串行处理（推理本身串行），响应按完成序回、`id` 配对。Node 侧实现（gptsovits-binding）对同引擎实例做了请求互斥，第二请求排队。
+- **并发与排队**：请求可并发下发，shim 侧单飞串行处理（推理本身串行），响应按完成序回、`id` 配对（`id` 为连接内序号，非全局唯一，daemon.log 归因时注意）。Node 侧实现（gptsovits-binding）对同引擎实例做了请求互斥，第二请求排队。daemon 等待队列有界 **4**（不含在途请求）：满员的新请求收 `error` 帧，message 携带固定前缀 `daemon queue full`——TS 侧按前缀识别为容量瞬态，转 per-call 重放且 daemon 不判死、不进熔断；拒转不关连接（关连接会伪装成在途 EOF 误计失败）。该 message 是跨语言契约，TS 常量与 shim 源文本由对拍测试钉死。
 - **超时**（Node 侧，gptsovits 实装值）：per-call ready 等待 120s（冷启动 12s 的 10 倍余量）、单请求等待 180s；daemon 形态直连握手 5s（温态 ready 应即时，长等即僵死判据）、温态单请求 60s（纯推理秒级 + 排队余量，不含加载成本）。超时即杀进程，收敛为合成失败进回退链（daemon 形态先经 per-call 降级）。
 - **孤儿兜底**：shim 不做「父进程死了我就自杀」的 stdin EOF 守卫式探测（shell 后台场景 /dev/null 的 EOF 与管道断开不可区分）；生命周期完全由管道 EOF 与信号承载，per-call 形态下宿主退出即管道断开。
 
@@ -106,7 +109,8 @@ daemon 常驻形态的 ready 额外携带**握手版本键**（per-call 形态�
 | 合成中进程死亡（含杀进程模拟） | `exit` settle | EngineError |
 | 合成超时 | deadline 竞速 | EngineError + 杀进程 |
 | 空样本/全零样本（静音产出） | Node 侧能量校验 | EngineError |
-| daemon 基础设施失败（拒连/拉起死/握手不符/在途 EOF/请求超时） | DaemonSession 分类为 `DaemonUnavailableError` | 降级 per-call 重放同一请求；重拉封顶后仍如此则本次调用判 daemon 不可用（`say` 侧后续完善熔断与开关） |
+| daemon 基础设施失败（拒连/拉起死/握手不符/在途 EOF/请求超时/输家等待超时） | DaemonSession 分类为 `DaemonUnavailableError`，markUnavailable 收敛处计入熔断文件 | 降级 per-call 重放同一请求（实例内 sticky）；跨进程累计 3 次/10min 开冷却闸直拒 daemon；温态成功清零；`SAY_DAEMON=off` 逃生门整体禁用 |
+| daemon 队满拒转（error 帧 message 前缀 `daemon queue full`） | TS 侧前缀识别（跨语言对拍钉死） | 容量瞬态非失败：转 per-call 重放，daemon 不判死、不进熔断 |
 
 回退语义见 `src/fallback.ts`：`fallback: system` 时回退系统嗓出声、stderr 一行（`fallback: ` 前缀）、exit 0。
 

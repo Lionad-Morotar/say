@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import net from "node:net";
 import type { DaemonProcess } from "../host.ts";
+import { isCircuitOpen, recordCircuitFailure, type CircuitHandle } from "./daemon-circuit.ts";
 
 /**
  * 常驻 daemon 的 Node 侧会话面（热启动 S1，gptsovits 钉版先行）：
@@ -101,12 +102,18 @@ export interface DaemonSessionOptions {
   expectedVersionKey: () => DaemonVersionKey;
   /** spawn 后等可连+ready 的上限：加载本体秒级到十几秒，沿用 per-call 的 120s 余量 */
   readyTimeoutMs?: number;
-  /** 既有 daemon 直连的 ready 等待：温态应即时，长等即僵死判据 */
+  /** 既有 daemon 直连的 ready 初判：温态应即时；超时后若 pid 文件年龄仍在加载窗内按加载中续等，窗口尽才判僵死 */
   warmTimeoutMs?: number;
   /** 温态请求 deadline：纯推理秒级 + 排队余量，远小于 per-call 180s（那个含模型加载，不该套到热态） */
   requestTimeoutMs?: number;
   /** lazy 轮询可连的间隔 */
   pollIntervalMs?: number;
+  /**
+   * 故障熔断句柄（daemon-failures 文件）：markUnavailable 是所有基础设施失败的收敛咽喉，
+   * 计数在此计入；off 与冷却直拒不走 markUnavailable 故不计数（容量事件与跳过不是劣化证据）。
+   * 缺席则纯内存 sticky，跨进程闸由上层装配决定开不开。
+   */
+  circuit?: CircuitHandle;
 }
 
 /** 四个计时旋钮的落定形态：缺省值集中一处，注入值供测试收窗 */
@@ -144,6 +151,9 @@ export class DaemonSession {
   /** 当前连接是否由本会话 spawn 而来：kill 优先用自带句柄，外部 daemon 走 pid 文件 */
   private socketFromSpawn = false;
   private spawnedProc: DaemonProcess | null = null;
+  /** spawn 句柄是否仍存活：进程一死，socket 对面的 daemon 就归他人，破坏面所有权必须随之让渡
+   * （bind 竞态里「先连上、后观察到 exit 3」的时序与此同构，归属按当下事实而非观察顺序） */
+  private spawnedProcAlive = false;
   /** 握手期 daemon ready 帧自述的 pid：kill 前与 pid 文件核对，不符即拒 kill（防 pid 复用误杀无辜进程） */
   private peerPid: number | null = null;
   /** 单消费者行队列：Buffer 累积按 0x0a 切（逐 chunk toString 会切断多字节 UTF-8） */
@@ -169,6 +179,11 @@ export class DaemonSession {
       throw new DaemonUnavailableError(`${this.opts.label} 常驻形态本次调用不再尝试：${this.unavailable}`);
     }
     if (this.socket !== null && !this.socket.destroyed && !this.streamEnded) return;
+    // 冷却闸只拦「新建立」：已有活连接照常复用（开窗后在途请求该出多少声出多少声）。
+    // 直拒不走 markUnavailable：冷却跳过不是新的劣化证据，也不该污染 sticky
+    if (this.opts.circuit !== undefined && isCircuitOpen(this.opts.circuit)) {
+      throw new DaemonUnavailableError(`${this.opts.label} 常驻形态熔断冷却中（近期连续失败），本次直接走 per-call`);
+    }
     if (this.establishing !== null) {
       await this.establishing;
       return;
@@ -231,27 +246,38 @@ export class DaemonSession {
    * 指向被复用的无辜进程、sock 可能是另一活 daemon 的注册点，不确定就不动 destructive 面。
    */
   async killDaemon(): Promise<"killed" | "skipped"> {
+    const spawnedPid = this.socketFromSpawn ? (this.spawnedProc?.pid ?? null) : null;
+    const pidFile = await this.readPidFile();
+    // spawn 句柄的归属非终身制：拉起后到 kill 决策前，注册点可能被他人 unlink-rebind 接管
+    // （backlog 排满的 ECONNREFUSED 被误判残file等交错）。pid 文件仍指自己 proc 才走 owned：
+    // 收自己进程、清自己文件。一旦不指自己，这条 socket 对面的 daemon 归属他人，
+    // 完整让渡 external 路径（经归属核对 kill 在位者 + 清其注册点）——半程弃权会把
+    // 「kill 过期 daemon 后重拉」的两轮制收敛打断成「文件挡路、轮次耗尽」
+    if (spawnedPid !== null && pidFile !== null && pidFile !== spawnedPid) {
+      this.socketFromSpawn = false;
+    }
     if (this.socketFromSpawn) {
-      const pid = this.spawnedProc?.pid ?? null;
-      if (pid !== null) {
+      if (spawnedPid !== null) {
         try {
-          process.kill(pid, "SIGKILL");
+          process.kill(spawnedPid, "SIGKILL");
         } catch {
           // 进程已死：kill 失败无意义，残file清理由下面兜住
         }
       }
-    } else {
-      const pidFile = await this.readPidFile();
-      if (this.peerPid !== null && pidFile !== null && this.peerPid !== pidFile) {
-        this.detachSocket();
-        return "skipped";
-      }
-      if (pidFile !== null) {
-        try {
-          process.kill(pidFile, "SIGKILL");
-        } catch {
-          // 同上
-        }
+      await unlinkQuiet(this.opts.socketPath);
+      await unlinkQuiet(this.opts.pidPath);
+      this.detachSocket();
+      return "killed";
+    }
+    if (this.peerPid !== null && pidFile !== null && this.peerPid !== pidFile) {
+      this.detachSocket();
+      return "skipped";
+    }
+    if (pidFile !== null) {
+      try {
+        process.kill(pidFile, "SIGKILL");
+      } catch {
+        // 同上
       }
     }
     await unlinkQuiet(this.opts.socketPath);
@@ -262,6 +288,9 @@ export class DaemonSession {
 
   private markUnavailable(reason: string): void {
     this.unavailable = reason;
+    // 熔断计数的唯一咽喉：establish/spawnAndWait/request 所有基础设施失败都收敛到这里，
+    // 拉起失败、握手不符、在途 EOF、请求超时 kill 天然全覆盖（票 04 计数事件集合）
+    if (this.opts.circuit !== undefined) recordCircuitFailure(this.opts.circuit);
     this.detachSocket();
   }
 
@@ -278,6 +307,7 @@ export class DaemonSession {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let socket: net.Socket | "need-spawn";
       let spawnedNow = false;
+      let loserMode = false;
       // 轮内共享预算：可连轮询与 ready 握手合计不超 readyTimeoutMs（两段各自满额会让
       // bind 即成但 ready 永不到场的僵死 daemon 静默挂近 2×120s，远超文档口径）
       const roundStart = Date.now();
@@ -291,17 +321,23 @@ export class DaemonSession {
         socket = connect;
       }
       if (socket === "need-spawn") {
-        socket = await this.spawnAndWait(); // 失败路径内部 markUnavailable 并抛，不返回
+        const spawned = await this.spawnAndWait(); // 失败路径内部 markUnavailable 并抛，不返回
+        socket = spawned.socket;
         spawnedNow = true;
+        // bind 竞态输家：探针判负 exit 3，或「先连上后观察到句柄退场」——两种时序同义，
+        // 这条连接对面的进程都不归本会话，破坏面所有权让渡给 pid 文件归属核对
+        loserMode = spawned.loser || !this.spawnedProcAlive;
         lastReason = "握手未通过";
       }
       const handshakeBudget = spawnedNow ? Math.max(1, this.opts.readyTimeoutMs - (Date.now() - roundStart)) : this.opts.warmTimeoutMs;
-      const outcome = await this.handshake(socket, handshakeBudget);
+      // 加载宽限只对 warm 直连开：spawn 自拉的连接其预算本就已含整个加载窗，再宽限是双重计时
+      const graceCheck = spawnedNow ? undefined : (): Promise<number | null> => this.warmLoadingGraceMs();
+      const outcome = await this.handshake(socket, handshakeBudget, graceCheck);
       if (outcome.kind === "ready") {
         const expected = this.opts.expectedVersionKey();
         const got = outcome.info;
         if (got.protocol === expected.protocol && got.engineVersion === expected.engineVersion && got.weightsFingerprint === expected.weightsFingerprint) {
-          this.settleSocket(socket, spawnedNow, got.pid);
+          this.settleSocket(socket, spawnedNow && !loserMode && this.spawnedProcAlive, got.pid);
           return;
         }
         // 不符也要记下对端自述 pid：kill 归属核对对「拒收的 ready」同样适用
@@ -315,11 +351,22 @@ export class DaemonSession {
       } else {
         lastReason = outcome.kind === "timeout" ? `ready 等待超时（>${Math.round((spawnedNow ? this.opts.readyTimeoutMs : this.opts.warmTimeoutMs) / 1000)}s）` : "握手期连接已终止（EOF）";
       }
+      // 迟到的 exit 3 仲裁窗：输家探针判负可能晚于 sock 可连到达（bind 竞态的交叠窗口——
+      // 他人刚 bind 完而我们spawn的输家还没退出场）。失败处置期proc若以 3 退场，
+      // 这条连接对面归属他人：转输家语义走 pid 文件核对，避免 owned 句柄空杀+误unlink赢家注册点。
+      // 只在失败路径付这个观察成本：ready 相符的复用路径若对面真是输家连接，破坏面归属由 settle 的 alive 复查兜住
+      if (spawnedNow && !loserMode && this.spawnedProc !== null) {
+        const late = await Promise.race([this.spawnedProc.exit, delay(this.opts.pollIntervalMs).then(() => null)]);
+        if (late !== null && late.exitCode === 3) {
+          loserMode = true;
+          this.spawnedProcAlive = false; // proc.exit 已 resolve 但 then 回调未必轮到：手动坐实，防下游 alive 误判
+        }
+      }
       // 僵死/过期形态：kill + unlink 后重拉一次（第二轮仍如此即封顶）。
-      // kill 归属现场钉定：本轮连接来自 spawn 就用自带句柄，外部 daemon 走 pid 文件；
-      // pid 归属核对不过（skipped）即封顶——重拉会撞同一堵墙，空转只会拉长静默
+      // kill 归属现场钉定：本轮连接来自 spawn 且非输家才用自带句柄；输家与外部 daemon 一律走 pid 文件
+      // ——输家自己的 spawn 句柄已以 exit 3 退场，拿它 kill 只会空杀自己、再 unlink 掉赢家的注册点
       this.socket = socket;
-      this.socketFromSpawn = spawnedNow;
+      this.socketFromSpawn = spawnedNow && !loserMode;
       if ((await this.killDaemon()) === "skipped") {
         lastReason = "daemon 自述 pid 与 pid 文件不符（pid 复用或双 daemon 并存），拒 kill 拒清其文件";
         break;
@@ -329,28 +376,51 @@ export class DaemonSession {
     throw new DaemonUnavailableError(`${this.opts.label} 常驻形态不可用：${lastReason}`);
   }
 
-  /** spawn 后轮询可连：进程先退/超 ready 上限都按拉起失败收敛（抛错），不无限等 */
-  private async spawnAndWait(): Promise<net.Socket> {
+  /**
+   * spawn 后轮询可连。退出码是分水岭：非 3 的早退按拉起失败收敛（抛错），
+   * exit 3 是 shim 探针判负「他人在位」——本会话转成输家，继续轮询 connect 等赢家可连
+   * （上限 = 加载窗 readyTimeoutMs），且此后对这条连接不做破坏面：进程与 sock 都归他人。
+   */
+  private async spawnAndWait(): Promise<{ socket: net.Socket; loser: boolean }> {
     const proc = this.opts.spawn(this.opts.idleMinutes);
     this.spawnedProc = proc;
     this.socketFromSpawn = true;
+    this.spawnedProcAlive = true;
+    void proc.exit.then(() => {
+      this.spawnedProcAlive = false;
+    });
     setStreamsActive(proc, false); // 常驻进程不拖宿主事件循环（同 shim-session 的 idle 纪律）
     const start = Date.now();
+    let loserSeen = false;
     for (;;) {
       const connect = await this.tryConnect();
       if (connect !== "absent" && connect !== "refused") {
-        return connect;
+        return { socket: connect, loser: loserSeen };
       }
       if (connect === "refused") {
         await unlinkQuiet(this.opts.socketPath); // bind 与残file竞态窗口：清掉继续等
       }
-      const died = await Promise.race([proc.exit.then(() => true), delay(this.opts.pollIntervalMs).then(() => false)]);
-      if (died) {
-        const why = this.spawnedProc === null ? "拉起失败" : "拉起失败（进程先于可连退出）";
-        this.markUnavailable(why);
-        throw new DaemonUnavailableError(`${this.opts.label} 常驻形态不可用：${why}`);
+      if (loserSeen) {
+        await delay(this.opts.pollIntervalMs); // 输家句柄已退场，没有再对赌的死亡信号，轮询自带节流
+      } else {
+        const exitOutcome = await Promise.race([proc.exit, delay(this.opts.pollIntervalMs).then(() => null)]);
+        if (exitOutcome !== null) {
+          if (exitOutcome.exitCode === 3) {
+            loserSeen = true; // 探针判负转等待；不能用 died-early 分支，加载中赢家误杀实证就是这条路径
+          } else {
+            const why = this.spawnedProc === null ? "拉起失败" : "拉起失败（进程先于可连退出）";
+            this.markUnavailable(why);
+            throw new DaemonUnavailableError(`${this.opts.label} 常驻形态不可用：${why}`);
+          }
+        }
       }
       if (Date.now() - start >= this.opts.readyTimeoutMs) {
+        if (loserSeen) {
+          // 输家超时：加载窗内赢家始终不可连（探针与 bind 之间它死了），按缺席降级——
+          // 不 kill 不 unlink：他人的残file留给下一个拉起者的 unlink-rebind 处理
+          this.markUnavailable("bind 竞态输家：等待在位 daemon 可连超加载窗上限");
+          throw new DaemonUnavailableError(`${this.opts.label} 常驻形态不可用：bind 竞态输家等待可连超时`);
+        }
         // 超上限仍不可连：杀掉自己拉起的进程兜底（它可能卡在加载）
         await this.killDaemon();
         this.markUnavailable(`ready 等待超时（>${Math.round(this.opts.readyTimeoutMs / 1000)}s）`);
@@ -359,15 +429,32 @@ export class DaemonSession {
     }
   }
 
-  /** 读到 ready/fatal；杂散行丢弃（引擎库 print 混流的既有形态）；返回 timeout/eof 交调用方进 kill 重拉判定 */
-  private async handshake(socket: net.Socket, timeoutMs: number): Promise<{ kind: "ready"; info: ReadyInfo } | { kind: "fatal"; message: string } | { kind: "timeout" } | { kind: "eof" }> {
+  /**
+   * 读到 ready/fatal；杂散行丢弃（引擎库 print 混流的既有形态）；返回 timeout/eof 交调用方进 kill 重拉判定。
+   * graceCheck 至多触发一次：初判到期仍未 ready 时，回调给「继续等的毫秒数」就同连接续读——
+   * bind 先于加载的赢家与僵死 daemon 在握手面不可分辨，加载窗内先当加载中（S2 竞态仲裁）。
+   */
+  private async handshake(socket: net.Socket, timeoutMs: number, graceCheck?: () => Promise<number | null>): Promise<{ kind: "ready"; info: ReadyInfo } | { kind: "fatal"; message: string } | { kind: "timeout" } | { kind: "eof" }> {
     this.attachSocket(socket);
     const start = Date.now();
+    let deadline = start + timeoutMs;
+    let graced = false;
     for (;;) {
-      const remaining = timeoutMs - (Date.now() - start);
-      if (remaining <= 0) return { kind: "timeout" };
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        if (!graced && graceCheck !== undefined) {
+          graced = true;
+          const extraMs = await graceCheck();
+          if (extraMs !== null && extraMs > 0) {
+            deadline = Date.now() + extraMs;
+            continue;
+          }
+        }
+        return { kind: "timeout" };
+      }
       const outcome = await this.waitFrame(remaining);
-      if (outcome.kind !== "line") return { kind: outcome.kind };
+      if (outcome.kind === "eof") return { kind: "eof" };
+      if (outcome.kind === "timeout") continue; // 帧等待到期不等于整体到期：回环顶按 deadline 与宽限再判
       const trimmed = outcome.line.trim();
       if (trimmed.length === 0) continue;
       let raw: unknown;
@@ -481,6 +568,24 @@ export class DaemonSession {
       const timer = setTimeout(() => finish({ kind: "timeout" }), timeoutMs);
       timer.unref();
     });
+  }
+
+  /**
+   * warm 直连 ready 初判到期后的加载宽限毫秒数：shim bind 成功即写 pid 文件（≈加载起点），
+   * pid 文件年龄还在加载窗内 = 对面可能只是加载中的赢家 → 续等剩余窗；
+   * 窗口耗尽仍无 ready = 僵死终态 → 照旧 kill 重拉（取代 S1「warm 5s 即杀」——真机实证
+   * 后来者会误杀加载中的赢家，宽限把 kill 推到窗口尽，僵死语义不丢只顺延）。
+   * pid 文件缺失或年龄为负（时钟异常）不给宽限，维持初判即杀。
+   */
+  private async warmLoadingGraceMs(): Promise<number | null> {
+    try {
+      const st = await stat(this.opts.pidPath);
+      const ageMs = Date.now() - st.mtimeMs;
+      if (ageMs < 0) return null;
+      return ageMs < this.opts.readyTimeoutMs ? this.opts.readyTimeoutMs - ageMs : null;
+    } catch {
+      return null;
+    }
   }
 
   private async readPidFile(): Promise<number | null> {

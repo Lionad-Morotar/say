@@ -23,10 +23,15 @@ export function readyFrame(over: Record<string, unknown> = {}): string {
 export interface FakeDaemonSpec {
   /** ready 帧原文；"none" = 连上后始终不出 ready（僵死形态）；缺省合法 ready */
   ready?: string | "none";
+  /** ready 帧延迟送达毫秒数：模拟 bind 先于加载的「加载中赢家」形态（竞态仲裁测试主用） */
+  readyDelayMs?: number;
   /** ready 前混发的引擎杂散行（库 print 进协议通道的既有形态） */
   beforeReady?: string[];
-  /** 收到请求行后的行为：缺省回 audio done；"close" 立即断连（在途 EOF）；"ignore" 挂死；"error" 回错误帧 */
-  onLine?: "audio" | "close" | "ignore" | "error";
+  /**
+   * 收到请求行后的行为：缺省回 audio done；"close" 立即断连（在途 EOF）；"ignore" 挂死；"error" 回错误帧；
+   * 函数形态逐请求自定回写（队列拒转这类「先拒后纳」时序需要按连接可编排的响应面）
+   */
+  onLine?: "audio" | "close" | "ignore" | "error" | ((line: string, conn: net.Socket) => void);
   /** 按给定字节块序写帧（模拟分包在 UTF-8 多字节中间切断） */
   writeChunks?: Buffer[];
 }
@@ -61,7 +66,13 @@ export function startFakeDaemon(sockPath: string, spec: FakeDaemonSpec = {}): Pr
       step();
     } else {
       for (const noise of spec.beforeReady ?? []) conn.write(noise);
-      if (spec.ready !== "none") conn.write(spec.ready ?? readyFrame());
+      if (spec.ready !== "none") {
+        if (spec.readyDelayMs !== undefined && spec.readyDelayMs > 0) {
+          setTimeout(() => conn.write(spec.ready ?? readyFrame()), spec.readyDelayMs);
+        } else {
+          conn.write(spec.ready ?? readyFrame());
+        }
+      }
     }
     let buffer = "";
     conn.on("data", (chunk) => {
@@ -72,6 +83,10 @@ export function startFakeDaemon(sockPath: string, spec: FakeDaemonSpec = {}): Pr
         buffer = buffer.slice(cut + 1);
         if (line.length > 0) {
           requests.push(line);
+          if (typeof spec.onLine === "function") {
+            spec.onLine(line, conn);
+            return;
+          }
           if (spec.onLine === "close") {
             conn.end(); // 请求刚收到就掐连接：在途 EOF 形态
             return;

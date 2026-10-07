@@ -4,7 +4,8 @@ import type { Host } from "../host.ts";
 import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
-import { createGptsovitsSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
+import { createGptsovitsSynth, createShimSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
+import { daemonEnabledFromEnv } from "../config.ts";
 
 export const GPTSOVITS_ENGINE = "gptsovits";
 
@@ -187,7 +188,11 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
   };
   const defaultVoiceDir = options.defaultVoiceDir ?? fileURLToPath(new URL("../../assets/engines/gptsovits", import.meta.url));
 
-  const synth = options.synth ?? createGptsovitsSynth(spec, host, options.daemon ?? {});
+  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
+  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
+  const daemonGate = daemonEnabledFromEnv(host.env);
+  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
+  const synth = options.synth ?? (daemonGate.enabled ? createGptsovitsSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
 
   /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义）。
    * ja 无中性参考资产（随仓只备 zh/en），参考降级取 default-zh 而 text_lang 独立按 ja 条件化——

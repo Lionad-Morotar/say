@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
-import { createGptsovitsSynth, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
+import { createGptsovitsSynth, DAEMON_QUEUE_FULL_MESSAGE, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
 import { createGptsovitsEngine } from "../src/engines/gptsovits.ts";
 import { GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 import type { EngineAdapter } from "../src/types.ts";
 import { createFakeHost, type DaemonSpawnRecord, type FakeDaemonHandle } from "./fake-host.ts";
 import { readyFrame, startFakeDaemon } from "./daemon-fakes.ts";
+import { CIRCUIT_COOLDOWN_MS, readCircuitRecord } from "../src/engines/daemon-circuit.ts";
 
 /**
  * daemon-first 接线的集成矩阵：daemon 走**进程内真 unix socket**（daemon-fakes 替身），
@@ -41,9 +42,10 @@ function specOf(labDir: string) {
 }
 
 /** per-call 降级面的 fake：daemon spawn 记录在案但永不 bind socket；per-call spawn 回 ready+audio */
-function makePerCallCapableHost(options: { onDaemonSpawn?: (record: DaemonSpawnRecord) => void; files?: Record<string, string | Uint8Array> } = {}) {
+function makePerCallCapableHost(options: { onDaemonSpawn?: (record: DaemonSpawnRecord) => void; files?: Record<string, string | Uint8Array>; env?: Record<string, string>; now?: () => number } = {}) {
   return createFakeHost({
-    env: { HOME: "/h" },
+    env: { HOME: "/h", ...(options.env ?? {}) },
+    ...(options.now !== undefined ? { now: options.now } : {}),
     ...(options.files !== undefined ? { files: options.files } : {}),
     daemonFactory: (record) => {
       const isDaemon = record.args.includes("--daemon");
@@ -172,6 +174,38 @@ describe("createGptsovitsSynth：daemon-first 分流", () => {
       }
     });
   });
+
+  it("daemon 队满拒转：按消息识别降级 per-call 出声，daemon 不判死、后续请求仍优先走常驻", async () => {
+    await withTempLab(async (labDir, fp) => {
+      let first = true;
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), {
+        ready: readyFrame({ weights_fingerprint: fp }),
+        onLine: (line, conn) => {
+          const id = (JSON.parse(line) as { id: number }).id;
+          if (first) {
+            first = false;
+            // 队满拒转形态：回 error 帧但不关连接（容量事件，非崩溃）
+            conn.write(`${JSON.stringify({ type: "error", id, message: `${DAEMON_QUEUE_FULL_MESSAGE}（队列已满）` })}\n`);
+          } else {
+            const pcm = Buffer.alloc(4);
+            pcm.writeInt16LE(16384, 0);
+            conn.write(`${JSON.stringify({ type: "audio", id, pcm: pcm.toString("base64"), sample_rate: 32000, done: true })}\n`);
+          }
+        },
+      });
+      const fake = makePerCallCapableHost();
+      try {
+        const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        const out1 = await synth(REQUEST);
+        expect(out1.sampleRate).toBe(24000); // 首请求队满 → per-call 重放出声
+        const out2 = await synth({ ...REQUEST, text: "第二句" });
+        expect(out2.sampleRate).toBe(32000); // 次请求队已腾出 → 仍走常驻，sticky 未误置
+        expect(daemon.connects).toBe(1); // 队满不 kill daemon：同一连接延续
+      } finally {
+        await daemon.close();
+      }
+    });
+  });
 });
 
 describe("createGptsovitsEngine 默认接线（daemon-first 生效面）", () => {
@@ -220,6 +254,150 @@ describe("createGptsovitsEngine 默认接线（daemon-first 生效面）", () =>
       expect(out).toMatchObject({ type: "pcm", sampleRate: 24000 });
       expect(fake.daemons[0]!.args).toContain("--daemon"); // 首选形态确实是常驻 daemon
       expect(fake.daemons[1]!.args).not.toContain("--daemon"); // 退路 per-call 兜住出声
+    });
+  });
+});
+
+describe("daemon 熔断：daemon-failures 跨调用闸住拉起", () => {
+  /** 每次 synth 工厂调用模拟一枚独立 CLI 进程：实例内 sticky 不跨进程，跨进程劣化靠熔断文件 */
+  function circuitPathOf(labDir: string): string {
+    return join(labDir, "daemon-failures");
+  }
+
+  it("三次连续拉起失败开窗：第四次不再触 daemon，直接 per-call 出声", async () => {
+    await withTempLab(async (labDir) => {
+      const clock = { t: 5_000_000 };
+      const fake = makePerCallCapableHost({ now: () => clock.t });
+      try {
+        for (let i = 0; i < 3; i += 1) {
+          const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+          expect((await synth(REQUEST)).sampleRate).toBe(24000); // 每轮都经 per-call 退路出声
+        }
+        const opened = readCircuitRecord(circuitPathOf(labDir));
+        expect(opened?.openedAt).toBe(clock.t); // 第三次失败即开窗（票 04：3 次进冷却）
+        const daemonSpawnsBefore = fake.daemons.filter((d) => d.args.includes("--daemon")).length;
+        expect(daemonSpawnsBefore).toBe(3);
+        const synth4 = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        expect((await synth4(REQUEST)).sampleRate).toBe(24000); // 冷却期内 daemon 完全不碰
+        expect(fake.daemons.filter((d) => d.args.includes("--daemon")).length).toBe(3); // 零新拉起：比降级更省
+      } finally {
+        void fake;
+      }
+    });
+  });
+
+  it("成功温态合成清零计数（删文件）", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const clock = { t: 5_000_000 };
+      writeFileSync(circuitPathOf(labDir), JSON.stringify({ count: 2, lastAt: clock.t, openedAt: null }));
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ now: () => clock.t });
+      try {
+        const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        expect((await synth(REQUEST)).sampleRate).toBe(32000);
+        expect(readCircuitRecord(circuitPathOf(labDir))).toBeNull(); // 温态成功抹掉劣化史：下一次失败从头计
+        await daemon.close();
+      } finally {
+        void fake;
+      }
+    });
+  });
+
+  it("冷却期直拒：不触 daemon、不读失败现场、计数文件原样不动", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const clock = { t: 5_000_000 };
+      const record = { count: 3, lastAt: clock.t - 1_000, openedAt: clock.t - 1_000 };
+      writeFileSync(circuitPathOf(labDir), JSON.stringify(record));
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ now: () => clock.t });
+      try {
+        const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        expect((await synth(REQUEST)).sampleRate).toBe(24000); // 健康 daemon 也不复用：冷却语义是「不碰 daemon」
+        expect(daemon.connects).toBe(0);
+        expect(fake.daemons.filter((d) => d.args.includes("--daemon"))).toHaveLength(0);
+        expect(readCircuitRecord(circuitPathOf(labDir))).toEqual(record); // 跳过不计失败：冷却期直拒不走 markUnavailable
+        await daemon.close();
+      } finally {
+        void fake;
+      }
+    });
+  });
+
+  it("冷却到期放行：daemon-first 恢复，成功合成把计数文件写没", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const clock = { t: 5_000_000 };
+      writeFileSync(circuitPathOf(labDir), JSON.stringify({ count: 3, lastAt: clock.t - CIRCUIT_COOLDOWN_MS - 1, openedAt: clock.t - CIRCUIT_COOLDOWN_MS - 1 }));
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ now: () => clock.t });
+      try {
+        const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        expect((await synth(REQUEST)).sampleRate).toBe(32000); // 到期给一次重试机会且成功
+        expect(readCircuitRecord(circuitPathOf(labDir))).toBeNull();
+        await daemon.close();
+      } finally {
+        void fake;
+      }
+    });
+  });
+});
+
+describe("SAY_DAEMON 逃生门（引擎装配面）", () => {
+  const VOICES = "/data/voices";
+  const DEF = "/say-repo/assets/engines/gptsovits";
+  const engineFiles = {
+    [`${DEF}/default-zh.wav`]: "",
+    [`${DEF}/default-zh.txt`]: "今天上海天气很好。\n",
+    [`${DEF}/default-en.wav`]: "",
+    [`${DEF}/default-en.txt`]: "This is a reference audio.\n",
+  };
+
+  function speakThrough(fakeHost: ReturnType<typeof createFakeHost>, labDir: string): Promise<{ type: string; sampleRate: number }> {
+    const engine = createGptsovitsEngine({ host: fakeHost.host, labDir, voicesDir: VOICES, defaultVoiceDir: DEF, daemon: FAST });
+    return engine.speak("你好", { voice: null, rateWpm: 175, output: null }) as Promise<{ type: string; sampleRate: number }>;
+  }
+
+  it("off：daemon 面零接触（健康 daemon 在位也不连），直接 per-call，与 daemon 上线前行为同形", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ files: engineFiles, env: { SAY_DAEMON: "off" } });
+      try {
+        const out = await speakThrough(fake, labDir);
+        expect(out.sampleRate).toBe(24000); // per-call 面出声
+        expect(daemon.connects).toBe(0); // 连都不连
+        expect(fake.daemons).toHaveLength(1);
+        expect(fake.daemons[0]!.args).not.toContain("--daemon"); // 只有 per-call 形态拉起
+        expect(existsSync(join(labDir, "daemon-failures"))).toBe(false); // off 不是失败：不进熔断
+      } finally {
+        await daemon.close();
+      }
+    });
+  });
+
+  it("on 显式值与缺省同义：daemon-first 照常", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ files: engineFiles, env: { SAY_DAEMON: "on" } });
+      try {
+        const out = await speakThrough(fake, labDir);
+        expect(out.sampleRate).toBe(32000);
+        expect(fake.stderr.join("")).not.toContain("SAY_DAEMON"); // 合法值不该有警告噪音
+      } finally {
+        await daemon.close();
+      }
+    });
+  });
+
+  it("坏值降级：按 on 处理并 stderr 警告（环境层 typo 不该瘫痪出声下限）", async () => {
+    await withTempLab(async (labDir, fp) => {
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
+      const fake = makePerCallCapableHost({ files: engineFiles, env: { SAY_DAEMON: "banana" } });
+      try {
+        const out = await speakThrough(fake, labDir);
+        expect(out.sampleRate).toBe(32000);
+        expect(fake.stderr.join("")).toContain("SAY_DAEMON");
+      } finally {
+        await daemon.close();
+      }
     });
   });
 });
