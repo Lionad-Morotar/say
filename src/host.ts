@@ -23,6 +23,26 @@ export interface SpawnOutcome {
 }
 
 /**
+ * 常驻子进程接缝：管道三向常开（协议引擎的 stdin/stdout JSON 行交互），
+ * 与一次性收齐的 spawn 不同——调用方按行驱动，进程生死以 exit settle 为准。
+ * spawn 本身失败（解释器不存在等）也折进 exit（signal = "SPAWN_ERROR"），
+ * 让「等 ready 或等死」两个 await 点统一收敛，不另设错误通道。
+ */
+export interface DaemonProcess {
+  readonly stdin: Writable;
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  /** 子进程 pid（诊断与外部信号用）；spawn 本身失败时为 null */
+  readonly pid: number | null;
+  readonly exit: Promise<{ exitCode: number | null; signal: string | null }>;
+}
+
+export interface DaemonSpawnOpts {
+  /** 增量 env（合并进父进程 env），协议引擎不需要干净环境但要能注入调试开关 */
+  env?: EnvMap;
+}
+
+/**
  * 一切触达操作系统的动作都收在这里。编排层只依赖本接口，
  * 单测注入假 host 即可覆盖回退、透传、临时名与退出码语义，不碰真实模型与真实用户目录。
  */
@@ -36,6 +56,8 @@ export interface Host {
   /** 面向用户的标准输出通道（engine ls/use 的清单与确认行）。合成链路不用它，保持 stdout 可管道 */
   writeStdout(text: string): void;
   spawn(cmd: string, args: readonly string[], opts?: SpawnOpts): Promise<SpawnOutcome>;
+  /** 常驻子进程（stdin/stdout JSON 行协议面）。返回前进程已拉起，spawn 失败经 exit 的 SPAWN_ERROR 表达 */
+  spawnDaemon(cmd: string, args: readonly string[], opts?: DaemonSpawnOpts): DaemonProcess;
   /** 递归建目录（已存在即成功）。config 写入前的落点保障 */
   mkdir(path: string): Promise<void>;
   fileExists(path: string): boolean;
@@ -115,6 +137,28 @@ export function createNodeHost(env: EnvMap = process.env): Host {
           );
         });
       });
+    },
+    spawnDaemon: (cmd, args, opts) => {
+      const child = spawn(cmd, [...args], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: opts?.env ? { ...process.env, ...opts.env } : process.env,
+      }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      // 子进程死亡后调用方仍在写 stdin 会触发 EPIPE 并升级成 uncaughtException——
+      // 写入死进程本无意义，错误吞掉，结局统一由 exit 表达
+      child.stdin.on("error", () => undefined);
+      // process handle 的保活引用与 stdio 流各自独立：常驻子进程只凭存活就拖住宿主
+      // 事件循环（CLI 合成完永不退出），活性统一交 stdio 流的 ref/unref 管理
+      child.unref();
+      return {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        pid: child.pid ?? null,
+        exit: new Promise((resolve) => {
+          child.on("error", () => resolve({ exitCode: null, signal: "SPAWN_ERROR" }));
+          child.on("exit", (code, signal) => resolve({ exitCode: code, signal }));
+        }),
+      };
     },
     fileExists: (p) => existsSync(p),
     listDirEntries: (p) => {

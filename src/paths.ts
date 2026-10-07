@@ -22,3 +22,13 @@ export function resolvePaths(env: EnvMap): SayPaths {
     voicesDir: path.join(data, "say", "voices"),
   };
 }
+
+/**
+ * say-lab 四引擎的安装根（engine-v2 S1 布局）：XDG data 下的 say-lab/<engine>/。
+ * 与 scripts/lib/engine-manifest.mjs 的 sayLabRoot 同构——判据漂移两处同改。
+ */
+export function sayLabEngineDir(env: EnvMap, engine: string): string {
+  const home = rootDir(env.HOME, homedir());
+  const data = rootDir(env.XDG_DATA_HOME, path.join(home, ".local", "share"));
+  return path.join(data, "say-lab", engine);
+}

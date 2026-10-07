@@ -1,6 +1,8 @@
 import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
-import { resolvePaths } from "../paths.ts";
+import { resolvePaths, sayLabEngineDir } from "../paths.ts";
 import type { EngineAdapter, ResolvedConfig } from "../types.ts";
+import { createGptsovitsEngine } from "./gptsovits.ts";
+import type { GptsovitsSynth } from "./gptsovits-binding.ts";
 import { synthesizeWithBinding, type SherpaSynth } from "./sherpa-binding.ts";
 import { isSherpaVoice } from "./sherpa-voices.ts";
 import { createSherpaEngine } from "./sherpa.ts";
@@ -11,6 +13,7 @@ import { synthesizeWithBinding as synthesizeWithZipvoiceBinding, type ZipvoiceSy
 export const SHERPA_ENGINE = "sherpa";
 export const SYSTEM_ENGINE = "system";
 export const ZIPVOICE_ENGINE = "zipvoice";
+export const GPTSOVITS_ENGINE = "gptsovits";
 
 export interface EngineRegistry {
   get(name: string): EngineAdapter | undefined;
@@ -39,10 +42,13 @@ export interface EngineRoute {
  *
  * 1. 显式点名 system 引擎时原样下传——系统嗓是开放集，音色语义由 say 自己兜，
  *    用户点名 system 就是点名要那套行为，不替他改主意；
- * 2. 其余引擎按登记序认领音色名（内嵌表 / 角色目录），认领即归属；
- * 3. 系统嗓开放集（`-v Tingting` 的意图是那个具体嗓子）——认领失败后按系统嗓清单委派，
+ * 2. 显式点名的引擎对音色名有最优先认领权——多引擎共享认领集时（gptsovits 与
+ *    zipvoice 用同一角色目录、同一 splitVoiceName 语义），纯登记序仲裁会让先登记者
+ *    静默接管显式选择，`-e gptsovits -v frieren` 永远到不了 gptsovits；
+ * 3. 其余引擎按登记序认领音色名（内嵌表 / 角色目录），认领即归属；
+ * 4. 系统嗓开放集（`-v Tingting` 的意图是那个具体嗓子）——认领失败后按系统嗓清单委派，
  *    迁移过来的既有调用不因默认引擎是神经引擎而失效；
- * 4. 谁也不认领的名字——交回配置引擎报「未登记」并触发回退：
+ * 5. 谁也不认领的名字——交回配置引擎报「未登记」并触发回退：
  *    `-v nosuch` 因此得到系统嗓 + 一行原因 + exit 0，而不是被系统 say 静默忽略成默认嗓。
  */
 export async function routeEngine(config: ResolvedConfig, registry: EngineRegistry): Promise<EngineRoute> {
@@ -50,6 +56,7 @@ export async function routeEngine(config: ResolvedConfig, registry: EngineRegist
   const voice = config.voice;
   if (voice === null || config.engine === SYSTEM_ENGINE) return { engine: configured, voice };
   if (configured === undefined) return { engine: undefined, voice };
+  if (configured.ownsVoice?.(voice)) return { engine: configured, voice };
   for (const engine of registry.all()) {
     if (engine.name === SYSTEM_ENGINE) continue;
     if (engine.ownsVoice?.(voice)) return { engine, voice };
@@ -71,15 +78,23 @@ export function createDefaultRegistry(
   sayBin: string = SYSTEM_SAY_BIN,
   synth: SherpaSynth = synthesizeWithBinding,
   cloneSynth: ZipvoiceSynth = synthesizeWithZipvoiceBinding,
+  gptsovitsSynth?: GptsovitsSynth,
 ): EngineRegistry {
   const paths = resolvePaths(host.env);
+  const gptsovits = createGptsovitsEngine({
+    host,
+    labDir: sayLabEngineDir(host.env, "gptsovits"),
+    voicesDir: paths.voicesDir,
+    ...(gptsovitsSynth !== undefined ? { synth: gptsovitsSynth } : {}),
+  });
   return createRegistry([
     createSherpaEngine({ host, modelsDir: paths.modelsDir, synth }),
     createZipvoiceEngine({ host, modelsDir: paths.modelsDir, voicesDir: paths.voicesDir, synth: cloneSynth }),
+    gptsovits,
     createSystemEngine(host, sayBin),
   ]);
 }
 
-export { createSherpaEngine, createSystemEngine, createZipvoiceEngine, parseSayVoiceList };
+export { createSherpaEngine, createSystemEngine, createZipvoiceEngine, createGptsovitsEngine, parseSayVoiceList };
 export type { SherpaSynth, ZipvoiceSynth };
 export { isSherpaVoice };
