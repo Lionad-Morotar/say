@@ -67,7 +67,6 @@ def main() -> int:
         emit({"type": "fatal", "message": f"{type(e).__name__}: {e}"})
         return 1
 
-    import torch
     import torchaudio
 
     # 协议 text_lang（zh/en）→ FireRed 白名单 tag（MULTI_LANG_TAGS 首字母大写全称）；
@@ -107,8 +106,11 @@ def main() -> int:
                 prompt_audio=wav,
                 prompt_audio_sr=int(sr),
             )
-            # float32 [-1,1] → int16 LE（协议面契约）：32767 满幅缩放避免 +32768 溢出翻转
-            samples = (gen_audio.squeeze(0).detach().cpu().numpy() * 32767.0).astype("<i2").reshape(-1)
+            # float32 → int16 LE（协议面契约）：先夹 [-1,1] 再缩放，codec 偶发 overshoot 的
+            # 超幅样本不 clip 会按模 2^16 回绕成满幅反向爆音（astype 是回绕不是饱和）
+            import numpy as np
+
+            samples = (np.clip(gen_audio.squeeze(0).detach().cpu().numpy(), -1.0, 1.0) * 32767.0).astype("<i2").reshape(-1)
             emit({
                 "type": "audio",
                 "id": req_id,
