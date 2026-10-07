@@ -7,6 +7,10 @@ export const REPO = path.resolve(import.meta.dirname, "..", "..");
 
 /** 角色素材资产位（非可再生资产，蓝图 D11：不入 cache） */
 export const VOICES_DIR = path.join(homedir(), ".local", "share", "say", "voices");
+/** peon-ping 注册表与 D.Va 增补包：17 条游戏原生干音，GPT-SoVITS 训练集候选（S7），
+ * CC-BY-NC-4.0 本机个人使用，资产落 VOICES_DIR 沿用不入 git 纪律 */
+export const PEON_REGISTRY_URL = "https://peonping.github.io/registry/index.json";
+export const PEON_DVA_DIR = path.join(VOICES_DIR, "dva", "peon-ping");
 /** 研究与冒烟产物位（docs/research 全局 ignored） */
 export const VOICEPACK_DOCS = path.join(REPO, "docs", "research", "voicepack");
 export const RAW_LOG = path.join(VOICEPACK_DOCS, "raw-log.jsonl");
