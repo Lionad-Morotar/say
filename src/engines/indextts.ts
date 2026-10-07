@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
-import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName } from "../voices.ts";
+import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, type CloneVoiceSpec } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
 import { createShimSynth, type IndexttsLabSpec, type IndexttsSynth } from "./indextts-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
@@ -108,6 +108,21 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
   /** default 嗓参考：引擎仓自带示例（随 repo 克隆分发） */
   const defaultRefPath = (): string => `${spec.repoDir}/${DEFAULT_VOICE_REPO_REL}`;
 
+  /**
+   * 角色 spec 的实例内 memo（S3 审查 F5/P2 收敛）：一次 CLI 调用里 isAvailable 与
+   * speak 会先后解析同一角色，meta.json 双读双解析在此收成单次；失败不驻留，
+   * 资产补齐后同进程重试可得。
+   */
+  const specCache = new Map<string, Promise<CloneVoiceSpec>>();
+  const characterSpecOf = (voice: string): Promise<CloneVoiceSpec> => {
+    const cached = specCache.get(voice);
+    if (cached !== undefined) return cached;
+    const parsed = resolveCharacterVoice(host, voicesDir, voice);
+    specCache.set(voice, parsed);
+    void parsed.catch(() => specCache.delete(voice));
+    return parsed;
+  };
+
   const requirementOf = async (voice: string | null): Promise<string> => {
     if (voice === null || voice === DEFAULT_VOICE_KEY) {
       return defaultRefPath();
@@ -118,7 +133,7 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
     }
     // 转写不进协议（IndexTTS 从参考音频提取音色，无 prompt_text 参数），
     // 但资产完整性校验保留——ref 缺失的角色在这里得到能修的精确报错
-    const requirement = await resolveCharacterVoice(host, voicesDir, voice);
+    const requirement = await characterSpecOf(voice);
     return requirement.audioPath;
   };
 
@@ -142,7 +157,7 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
         return { ok: false, reason: `${spec.labDir} 缺少 ${missing.length} 项：${names}（先跑 scripts/install-engine.mjs indextts）` };
       }
       try {
-        if (voice !== null && voice !== DEFAULT_VOICE_KEY) await resolveCharacterVoice(host, voicesDir, voice);
+        if (voice !== null && voice !== DEFAULT_VOICE_KEY) await characterSpecOf(voice);
         return { ok: true };
       } catch (error) {
         return { ok: false, reason: error instanceof EngineError ? error.message : String(error) };
