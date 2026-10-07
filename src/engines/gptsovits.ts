@@ -4,7 +4,7 @@ import type { Host } from "../host.ts";
 import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
-import { createShimSynth, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
+import { createGptsovitsSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
 
 export const GPTSOVITS_ENGINE = "gptsovits";
 
@@ -46,8 +46,10 @@ export interface GptsovitsEngineOptions {
   defaultVoiceDir?: string;
   /** shim 脚本路径；缺省按仓内 scripts/shims/ 定位 */
   shimPath?: string;
-  /** 合成函数：缺省走真实 shim 会话，测试注入 fake */
+  /** 合成函数：缺省走 daemon-first 常驻会话（降级 per-call），测试注入 fake 绕开进程面 */
   synth?: GptsovitsSynth;
+  /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
+  daemon?: GptsovitsDaemonTuning;
 }
 
 /**
@@ -172,7 +174,8 @@ function assertAudible(samples: Float32Array): void {
 /**
  * GPT-SoVITS v2 适配：api_v2 同核薄封装（CPU 档），零样本克隆——
  * 每请求自带参考（角色目录一比一映射或内置中性参考），引擎侧无角色状态。
- * 进程形态是 per-call 常驻：引擎实例内多次合成复用同一 shim 进程（首块付冷启动，后续热态）。
+ * 进程形态是 daemon-first：跨调用常驻 daemon（unix socket，冷启动整个 burst 只付一次、闲置自收割），
+ * 基础设施失败降级 per-call——引擎实例内多次合成复用同一 shim 进程（首块付冷启动，后续热态）。
  */
 export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAdapter {
   const { host, voicesDir } = options;
@@ -184,7 +187,7 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
   };
   const defaultVoiceDir = options.defaultVoiceDir ?? fileURLToPath(new URL("../../assets/engines/gptsovits", import.meta.url));
 
-  const synth = options.synth ?? createShimSynth(spec, host);
+  const synth = options.synth ?? createGptsovitsSynth(spec, host, options.daemon ?? {});
 
   /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义）。
    * ja 无中性参考资产（随仓只备 zh/en），参考降级取 default-zh 而 text_lang 独立按 ja 条件化——

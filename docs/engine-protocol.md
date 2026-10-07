@@ -2,11 +2,11 @@
 
 引擎层 v2 的统一 shim 协议：Node 宿主与各 TTS 引擎的 Python 侧薄封装（shim）之间的 stdin/stdout JSON 行协议。蓝图裁决 4 钉版，S3 由 GPT-SoVITS 先行落地，S4（VoxCPM）/S5（IndexTTS）/S6（FireRedTTS3）复用同一契约，只换 shim 内核。
 
-协议的 TS 侧执行面在 `src/engines/gptsovits-protocol.ts`（编解码纯函数）；GPT-SoVITS 的 Python 侧执行面在 `scripts/shims/gptsovits-shim.py`。改帧格式两处同改。
+协议的 TS 侧执行面在 `src/engines/gptsovits-protocol.ts`（编解码纯函数）与 `src/engines/daemon-session.ts`（常驻形态的连接与握手面）；GPT-SoVITS 的 Python 侧执行面在 `scripts/shims/gptsovits-shim.py`。改帧格式两处同改。
 
 ## 帧格式
 
-- 一行一个 JSON 对象，UTF-8，`\n` 结尾。
+- 一行一个 JSON 对象，UTF-8，`\n` 结尾。传输两形态共用此帧面：per-call 走 stdin/stdout 管道；常驻 daemon 走 unix socket 双向流。帧不动、只换传输。
 - 文本内容中的换行由 JSON 字符串转义承担，天然不成帧。
 - 杂散行容忍：引擎库向 stdout 的杂散打印（i18n 提示、耗时统计）由消费方按「解析不了的行丢弃」处理，不毒化协议面。shim 侧仍有义务把协议通道与引擎日志分离（GPT-SoVITS shim 用 fd 1 副本 + `sys.stdout` 改道 stderr 的启动序）。
 
@@ -70,12 +70,29 @@
 
 模型加载完成后 shim 写出的第一协议帧。冷启动（进程拉起到 ready）是一次性成本，GPT-SoVITS v2 CPU 档实测 ~12s。
 
+daemon 常驻形态的 ready 额外携带**握手版本键**（per-call 形态不携带，消费方忽略未知字段）：
+
+```json
+{"type":"ready","engine":"gptsovits","version":"v2","device":"cpu","protocol":"2","weights_fingerprint":"<sha256 hex>"}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `protocol` | 协议版本常量，与 Node 侧同仓同步 bump；漂移只发生在「旧代码拉起的旧 daemon」场景 |
+| `weights_fingerprint` | 权重面磁盘投影：安装 marker 清单（`.install-ok` 的 `rel\|size\|mtime_ms` 升序 join）的 sha256，TS 与 Python 双实现由对拍测试钉死；升级重装 marker 变 → 指纹变 → 旧 daemon 握手自动失效 |
+| `pid` | daemon 自述 pid：Node 侧对 pid 文件执行 kill 前与本字段核对，不符即拒 kill 拒清文件（pid 文件可能指向被复用的无辜进程）；旧 shim 无此字段，缺席时不校验、维持原 kill 语义 |
+
+任一不符 = 过期常驻进程（跑的是旧代码或旧权重），Node 侧判 SIGKILL + unlink sock + 重拉一次封顶；不做热切权重——进程内存混两套状态产错音无从归因。
+
 ## 会话生命周期
 
 - **进程形态**：Node 宿主 spawn shim（`<venv python> <shim.py> --repo <引擎仓库根>`），per-call 常驻——一次 CLI 调用内 N 次合成复用同一进程（首块付冷启动，后续热态），调用结束随宿主进程收尾。
+- **常驻形态（daemon，gptsovits 先行）**：`--daemon [--idle-minutes N]` 拉起，bind `<lab>/daemon.sock` 先于模型加载（加载期连接排队等待，就绪广播 ready），冷启动整个 burst 只付一次、跨 CLI 调用复用。帧面与 per-call 逐字一致，仅传输换成 socket；daemon 的 ready 必携带握手版本键（见上节）。bind 成功即自写 `<lab>/daemon.pid`（getpid）——unix socket 拿不到对端 pid，这是 Node 侧 kill 过期 daemon 的唯一句柄；stdio 启动即重定向 `<lab>/daemon.log`（拉起方 CLI 随时退出会关闭继承管道，引擎写死管道即死），协议帧不占 stdio。
+- **bind 竞态裁决（基础形态）**：EADDRINUSE 时探针 connect 既有 sock——可连 = 活体已在位，本次拉起判负 exit 3（绝不动赢家的 sock/pid）；不可连 = 僵死残file，清掉重 bind。多 CLI 同时 lazy 拉起的「输家等赢家就绪」的完整竞态仲裁归后续完善。
+- **daemon 生命周期**：闲置收割由 daemon 自计时自退（无请求、队列排空且无在位连接超阈）；SIGTERM 与 `shutdown` 帧优雅自退；两者退出均清 sock/pid。宿主 CLI 退出不收走 daemon（自持文件与信号生命周期）。Node 侧连接断开、ready 不符、请求超时等**基础设施失败**降级 per-call 重放同一请求（本次调用内不再重试 daemon，新调用自然重触）；`error`/`fatal` 帧是**引擎级确定性失败**，不降级重放（同一请求 per-call 必复现，重放白付进程成本）。
 - **收尾**：Node 关闭 stdin（EOF）即 shim 优雅退出；SIGTERM/SIGKILL 同样终止。无显式握手关停协议。
 - **并发**：请求可并发下发但 shim 侧串行处理（推理本身串行），响应按完成序回、`id` 配对。Node 侧实现（gptsovits-binding）对同引擎实例做了请求互斥，第二请求排队。
-- **超时**（Node 侧，gptsovits 实装值）：ready 等待 120s（冷启动 12s 的 10 倍余量）、单请求等待 180s。超时即杀进程，收敛为合成失败进回退链。
+- **超时**（Node 侧，gptsovits 实装值）：per-call ready 等待 120s（冷启动 12s 的 10 倍余量）、单请求等待 180s；daemon 形态直连握手 5s（温态 ready 应即时，长等即僵死判据）、温态单请求 60s（纯推理秒级 + 排队余量，不含加载成本）。超时即杀进程，收敛为合成失败进回退链（daemon 形态先经 per-call 降级）。
 - **孤儿兜底**：shim 不做「父进程死了我就自杀」的 stdin EOF 守卫式探测（shell 后台场景 /dev/null 的 EOF 与管道断开不可区分）；生命周期完全由管道 EOF 与信号承载，per-call 形态下宿主退出即管道断开。
 
 ## 失败面（全部收敛为引擎合成失败，进 say 回退链）
@@ -89,6 +106,7 @@
 | 合成中进程死亡（含杀进程模拟） | `exit` settle | EngineError |
 | 合成超时 | deadline 竞速 | EngineError + 杀进程 |
 | 空样本/全零样本（静音产出） | Node 侧能量校验 | EngineError |
+| daemon 基础设施失败（拒连/拉起死/握手不符/在途 EOF/请求超时） | DaemonSession 分类为 `DaemonUnavailableError` | 降级 per-call 重放同一请求；重拉封顶后仍如此则本次调用判 daemon 不可用（`say` 侧后续完善熔断与开关） |
 
 回退语义见 `src/fallback.ts`：`fallback: system` 时回退系统嗓出声、stderr 一行（`fallback: ` 前缀）、exit 0。
 
