@@ -78,6 +78,42 @@ const GPTSOVITS = {
       /** 解压产物需移入 venv 的 pyopenjtalk 包目录才生效（install.sh 同款动作）；link 步骤幂等补链 */
       linkIntoVenvPackage: "pyopenjtalk",
     },
+    // NLTK 数据两件（英文文本路径的隐藏依赖：word_tokenize→punkt_tab、pos_tag→averaged_perceptron_tagger_eng）。
+    // 安装清单曾未覆盖：调研期数据散落 ~/nltk_data 掩盖了 fresh 面必挂的事实。落位 venv/nltk_data——NLTK 自动查
+    // sys.prefix/nltk_data（venv 内实测确认），数据随 venv 生命周期自包含，卸引擎即卸数据。源 = nltk_data gh-pages
+    // 静态 zip，raw 直连与 jsdelivr CDN 双通道（指纹实测一致）；zip 解压 strip 顶层同名目录。
+    {
+      file: "venv/nltk_data/tokenizers/punkt_tab",
+      size: 4319076,
+      sha256: "e57f64187974277726a3417ca6f181ec5403676c717672eef6a748a7b20e0106",
+      sources: [
+        { net: "github", url: "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt_tab.zip" },
+        { net: "jsdelivr", url: "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/tokenizers/punkt_tab.zip" },
+      ],
+      archive: { strip: 1, delete: true },
+    },
+    {
+      file: "venv/nltk_data/taggers/averaged_perceptron_tagger_eng",
+      size: 1539115,
+      sha256: "6025f530624335c67d6547d44757b357b4e79bae030a0383e9887a92c1718f0b",
+      sources: [
+        { net: "github", url: "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/taggers/averaged_perceptron_tagger_eng.zip" },
+        { net: "jsdelivr", url: "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/taggers/averaged_perceptron_tagger_eng.zip" },
+      ],
+      archive: { strip: 1, delete: true },
+    },
+    // cmudict（英文 g2p 的发音词典，english.py 词素转音素链路）：fresh 模拟实证的第三个隐藏依赖——
+    // tagger 两件在位而词典缺席时合成仍 LookupError 挂（回退 system 掩盖为成功出声，冒烟必须关回退取证）。
+    {
+      file: "venv/nltk_data/corpora/cmudict",
+      size: 896069,
+      sha256: "d07cca47fd72ad32ea9d8ad1219f85301eeaf4568f8b6b73747506a71fb5afd6",
+      sources: [
+        { net: "github", url: "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/cmudict.zip" },
+        { net: "jsdelivr", url: "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/corpora/cmudict.zip" },
+      ],
+      archive: { strip: 1, delete: true },
+    },
   ],
   patches: [],
 };
@@ -123,10 +159,15 @@ const INDEXTTS = {
     { file: "checkpoints/feat2.pt", size: 374866, sha256: "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80", sources: [ms("IndexTeam/IndexTTS-2.5", "feat2.pt"), hf("IndexTeam/IndexTTS-2.5", "feat2.pt")] },
     { file: "checkpoints/wav2vec2bert_stats.pt", size: 9343, sha256: "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2", sources: [ms("IndexTeam/IndexTTS-2.5", "wav2vec2bert_stats.pt"), hf("IndexTeam/IndexTTS-2.5", "wav2vec2bert_stats.pt")] },
     { file: "checkpoints/multilingual_zh_ja_yue_char_del.tiktoken", size: 907395, sha256: "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718", sources: [ms("IndexTeam/IndexTTS-2.5", "multilingual_zh_ja_yue_char_del.tiktoken"), hf("IndexTeam/IndexTTS-2.5", "multilingual_zh_ja_yue_char_del.tiktoken")] },
-    // 首跑自拉（indextts/utils/model_download.py）：w2v-bert 4.6GB + bigvgan 449MB + semantic_codec 346MB + campplus 27MB。
-    // 预热可省首跑下载等待，但缺失不判 partial——引擎侧 fallback 链实测可用。
-    { file: "checkpoints/hf_cache/facebook/w2v-bert-2.0/model.safetensors", size: 4600000000, sha256: "", sources: [hf("facebook/w2v-bert-2.0", "model.safetensors")], tier: "auto" },
-    { file: "checkpoints/hf_cache/nvidia/bigvgan_v2_22khz_80band_256x/bigvgan_generator.pt", size: 449000000, sha256: "", sources: [hf("nvidia/bigvgan_v2_22khz_80band_256x", "bigvgan_generator.pt")], tier: "auto" },
+    // 首跑自拉四件（indextts/utils/model_download.py ensure_models_available）：落位与判据对齐引擎权威消费位——
+    // 目录形态 w2v-bert-2.0/（无 facebook 前缀）与 bigvgan/（无 nvidia 前缀），平铺单文件 semantic_codec_model.safetensors
+    // 与 campplus_cn_common.bin。清单曾按 HF hub cache 布局误写 org 前缀致 status autoPending 假报 missing（S5 实证）。
+    // 上游就绪判据只查目录非空（下载中断残留小文件会误判 ready），say 侧清单锚主权重文件级判据规避：semantic_codec/campplus
+    // 钉精确 size+sha256（引擎自拉同一 repo/path，盘上件实测指纹）。缺失不判 partial——引擎侧 fallback 链实测可用。
+    { file: "checkpoints/hf_cache/w2v-bert-2.0/model.safetensors", size: 4600000000, sha256: "", sources: [hf("facebook/w2v-bert-2.0", "model.safetensors")], tier: "auto" },
+    { file: "checkpoints/hf_cache/bigvgan/bigvgan_generator.pt", size: 449000000, sha256: "", sources: [hf("nvidia/bigvgan_v2_22khz_80band_256x", "bigvgan_generator.pt")], tier: "auto" },
+    { file: "checkpoints/hf_cache/semantic_codec_model.safetensors", size: 177183712, sha256: "ec947271175d8cad75ec37e83aa487e27c97a0f72a303393772da5ffa84bddf2", sources: [ms("amphion/MaskGCT", "semantic_codec/model.safetensors"), hf("amphion/MaskGCT", "semantic_codec/model.safetensors")], tier: "auto" },
+    { file: "checkpoints/hf_cache/campplus_cn_common.bin", size: 28036335, sha256: "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8", sources: [ms("iic/speech_campplus_sv_zh-cn_16k-common", "campplus_cn_common.bin"), hf("funasr/campplus", "campplus_cn_common.bin")], tier: "auto" },
     // default 嗓参考（S5）：上游已把示例音频移出版本库改按需下载（repo .gitattributes 注记），
     // 浅克隆不含此件——say 的 default 参考取它，缺了引擎装得齐也出不了 default 声，故进主权重面。
     // 源在 HF Spaces（ModelScope 侧无 models 仓直链形态），单通道 hf-mirror。
