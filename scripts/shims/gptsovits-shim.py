@@ -31,6 +31,10 @@ import traceback
 # 那正是握手要拒的对象。per-call 形态不携带（帧消费面忽略未知字段：帧不动、只换传输）。
 PROTOCOL_VERSION = "2"
 
+# 队满拒转的 message：与 TS 侧 DAEMON_QUEUE_FULL_MESSAGE 逐字一致（源文本对拍测试钉死）。
+# 语义是容量事件不是请求失败：Node 侧按此前缀归入基础设施失败降级 per-call，daemon 与连接都不动。
+QUEUE_FULL_MESSAGE = "daemon queue full"
+
 # 权重指纹的磁盘投影清单：安装期 sha256 校验通过后的 .install-ok marker（install-engine.mjs 写）。
 # 与 TS 侧 GPTSOVITS_WEIGHT_MARKERS 逐条一致——漂移会致每次握手失败、静默永久降级 per-call，
 # 由 test/daemon-fingerprint.test.ts 双实现对拍钉死。
@@ -109,7 +113,15 @@ def serve_daemon(args) -> int:
         except OSError:
             probe.close()
         os.remove(sock_path)
-        server.bind(sock_path)
+        try:
+            server.bind(sock_path)
+        except OSError as e2:
+            if e2.errno == errno.EADDRINUSE:
+                # unlink-rebind 只许一次（票 04 钉版）：二次仍被占 = 探针与 unlink 的间隙被他人接管，
+                # 与探针判负同态 exit 3 让位——裸 OSError 崩 exit 1 会把「他人在位」误报成拉起失败
+                log("unlink 重 bind 仍被占（他人刚接管），本次拉起让位退出（exit 3）")
+                return 3
+            raise
     server.listen(16)
     with open(pid_path, "w", encoding="utf-8") as f:
         f.write(f"{os.getpid()}\n")
@@ -117,7 +129,9 @@ def serve_daemon(args) -> int:
 
     clients: list[dict] = []  # {"conn": socket, "ready_sent": bool}：广播与 accept 的 ready 恰发一次
     clients_lock = threading.Lock()
-    work: "queue.Queue[tuple[dict, bytes]]" = queue.Queue()
+    # 有界排队：单飞在途之外的等待位上限 4（票 03/04 钉版），第 5 路等待者收拒转帧转 per-call——
+    # 无界队列会把「 daemon 忙」伪装成「daemon hang」，客户端 60s deadline 到点误杀健康进程
+    work: "queue.Queue[tuple[dict, bytes]]" = queue.Queue(maxsize=4)
     stop_flag = threading.Event()
     loaded = threading.Event()
     engine_info: dict = {}
@@ -208,9 +222,20 @@ def serve_daemon(args) -> int:
             buf += chunk
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                if line.strip():
-                    work.put((client, line))
-                    last_activity[0] = time.monotonic()
+                if not line.strip():
+                    continue
+                try:
+                    work.put_nowait((client, line))
+                except queue.Full:
+                    # 队满即拒（票 03/04「拒的出口接回退」）：回固定 message 的 error 帧，
+                    # 连接不关、进程不动——关连接会伪装成在途 EOF 崩断，误进熔断计数
+                    try:
+                        req_id = int(json.loads(line).get("id", -1))
+                    except (ValueError, TypeError, AttributeError):
+                        req_id = -1
+                    send_frame(client, {"type": "error", "id": req_id, "message": QUEUE_FULL_MESSAGE})
+                    continue
+                last_activity[0] = time.monotonic()
         with clients_lock:
             if client in clients:
                 clients.remove(client)
@@ -240,12 +265,18 @@ def serve_daemon(args) -> int:
 
     def worker_loop() -> None:
         while not stop_flag.is_set():
-            if not loaded.is_set():
-                stop_flag.wait(0.2)
-                continue
             try:
                 client, raw = work.get(timeout=0.2)
             except queue.Empty:
+                continue
+            # 常驻 get 是为了消除旧「先查 loaded 再 get」门控的盲区：loaded 落位瞬间
+            # worker 可能正睡着轮询觉（最长 200ms），ready 后头几路请求会积压成伪队满。
+            # 协议上 ready 前不该有请求进来，这里的等加载分支只是防御性兜底（步进查停位标志，退出不被拖 60s）
+            while not loaded.is_set():
+                if stop_flag.is_set():
+                    break
+                loaded.wait(0.1)
+            if not loaded.is_set():
                 continue
             process_request(client, raw)
             last_activity[0] = time.monotonic()

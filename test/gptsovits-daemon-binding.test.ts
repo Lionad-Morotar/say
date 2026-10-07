@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
-import { createGptsovitsSynth, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
+import { createGptsovitsSynth, DAEMON_QUEUE_FULL_MESSAGE, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
 import { createGptsovitsEngine } from "../src/engines/gptsovits.ts";
 import { GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 import type { EngineAdapter } from "../src/types.ts";
@@ -167,6 +167,38 @@ describe("createGptsovitsSynth：daemon-first 分流", () => {
         const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
         await expect(synth(REQUEST)).rejects.toThrow(/参考音频损坏/);
         expect(fake.daemons).toHaveLength(0); // 引擎级失败：不付第二次进程成本
+      } finally {
+        await daemon.close();
+      }
+    });
+  });
+
+  it("daemon 队满拒转：按消息识别降级 per-call 出声，daemon 不判死、后续请求仍优先走常驻", async () => {
+    await withTempLab(async (labDir, fp) => {
+      let first = true;
+      const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), {
+        ready: readyFrame({ weights_fingerprint: fp }),
+        onLine: (line, conn) => {
+          const id = (JSON.parse(line) as { id: number }).id;
+          if (first) {
+            first = false;
+            // 队满拒转形态：回 error 帧但不关连接（容量事件，非崩溃）
+            conn.write(`${JSON.stringify({ type: "error", id, message: `${DAEMON_QUEUE_FULL_MESSAGE}（队列已满）` })}\n`);
+          } else {
+            const pcm = Buffer.alloc(4);
+            pcm.writeInt16LE(16384, 0);
+            conn.write(`${JSON.stringify({ type: "audio", id, pcm: pcm.toString("base64"), sample_rate: 32000, done: true })}\n`);
+          }
+        },
+      });
+      const fake = makePerCallCapableHost();
+      try {
+        const synth = createGptsovitsSynth(specOf(labDir), fake.host, FAST);
+        const out1 = await synth(REQUEST);
+        expect(out1.sampleRate).toBe(24000); // 首请求队满 → per-call 重放出声
+        const out2 = await synth({ ...REQUEST, text: "第二句" });
+        expect(out2.sampleRate).toBe(32000); // 次请求队已腾出 → 仍走常驻，sticky 未误置
+        expect(daemon.connects).toBe(1); // 队满不 kill daemon：同一连接延续
       } finally {
         await daemon.close();
       }
