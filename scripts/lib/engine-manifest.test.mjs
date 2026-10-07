@@ -1,6 +1,8 @@
 // manifest 完整性单测：数据声明是安装器与状态查询的共同输入，形态错误要在测试层爆而不是装到一半爆。
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { ENGINES, ENGINE_IDS, sayLabRoot, engineDir, UV_INDEX } from "./engine-manifest.mjs";
 
 test("四引擎全注册且 id 一致", () => {
@@ -91,4 +93,21 @@ test("sayLabRoot 走 XDG_DATA_HOME 覆盖，空串视同未设", () => {
 
 test("UV_INDEX 是国内镜像（直连 PyPI 挂死，报告实证）", () => {
   assert.ok(UV_INDEX.includes("tsinghua") || UV_INDEX.includes("aliyun"), UV_INDEX);
+});
+
+test("manifest 与引擎侧判据跨面一致：gptsovits 非 auto 条目的判据路径在 missingAssets 有对应字面量", () => {
+  // 三处消费面同改纪律（install/status/引擎侧 missingAssets）升为测试期拦截：
+  // 补清单漏改引擎侧判据时 status 与 isAvailable 出裂缝（S9 审查实证）
+  const adapterSource = readFileSync(
+    fileURLToPath(new URL("../../src/engines/gptsovits.ts", import.meta.url)),
+    "utf8",
+  );
+  // 判据侧的仓库内条目经 spec.repoDir 变量拼接，探针剥掉清单路径的 repoDir 前缀再比对
+  const repoPrefix = `${ENGINES.gptsovits.repoDir}/`;
+  for (const w of ENGINES.gptsovits.weights) {
+    if (w.tier === "auto") continue;
+    const rel = w.file.startsWith(repoPrefix) ? w.file.slice(repoPrefix.length) : w.file;
+    const probe = w.archive ? `${rel}/.install-ok` : rel;
+    assert.ok(adapterSource.includes(probe), `引擎侧判据缺清单条目 ${probe}（gptsovitsMissingAssets 两处同改）`);
+  }
 });
