@@ -16,6 +16,8 @@ export interface GptsovitsRequest {
   /** 合成文本的语言，"auto" 交给引擎侧检测 */
   textLang: string;
   speedFactor: number;
+  /** 引擎侧自然语言控制指令（S4 起，VoxCPM voice creation 消费）；缺席即无指令，shim 侧按需忽略 */
+  control?: string;
 }
 
 /** 就绪消息：模型加载完成的握手信号（冷启动 ~12s 后到达） */
@@ -61,6 +63,7 @@ export function encodeRequest(req: GptsovitsRequest): string {
     prompt_lang: req.promptLang,
     text_lang: req.textLang,
     speed_factor: req.speedFactor,
+    ...(req.control !== undefined ? { control: req.control } : {}),
   })}\n`;
 }
 

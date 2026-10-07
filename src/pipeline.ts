@@ -1,6 +1,7 @@
 import { deliver, deliverAndExit, stagingPath, type Delivery, type Timing } from "./delivery.ts";
 import type { RunDeps } from "./deps.ts";
 import { SYSTEM_ENGINE } from "./engines/index.ts";
+import { messageOf } from "./errors.ts";
 import { attemptSpeak, recover, speakWith, type Attempt } from "./fallback.ts";
 import { EXIT_OK, fail, type Outcome } from "./report.ts";
 import type { AudioOut, EngineAdapter, ResolvedConfig, SpeakOptions } from "./types.ts";
@@ -129,6 +130,60 @@ async function mergeChunks(ctx: SpeakContext, engine: EngineAdapter, chunks: rea
 }
 
 /**
+ * 出声卡模式的引擎内流式（S4 起，VoxCPM 先行）：单块文本内边合成边交付，
+ * 开口时间从整句合成完提前到首块就绪（实测 0.2-0.5s 量级）。文本块之间顺序推进——
+ * 引擎内流式已把单块拆碎，块间预发的增量收益小且会与引擎的串行推理会话纠缠。
+ * 失败语义按交付进度分档：全部块首块之前失败 = 整体失败回退全文重说；
+ * 后续文本块首块之前失败 = 已交付块的文本已知边界，剩余文本交回退引擎（recoverTail）；
+ * 文本块内中途失败 = 引擎内块是同一文本的连续音频段，剩余文本边界不可得，
+ * 重播全文的代价高于漏尾——出过声即 exit 0，原因一行可见。
+ */
+async function streamChunks(
+  ctx: SpeakContext,
+  engine: EngineAdapter,
+  streaming: NonNullable<EngineAdapter["speakStreaming"]>,
+  chunks: readonly string[],
+): Promise<Outcome> {
+  const { host } = ctx.deps;
+  let deliveredAny = false;
+  let opened = false;
+  let subIndex = 0;
+  for (const [index, chunk] of chunks.entries()) {
+    // 计时基准随子块推进：区间恒为「上一子块交付完成 → 本子块到达」，与 deliver 内部的播放计时互不重叠
+    let mark = host.now();
+    let blockDelivered = false;
+    try {
+      for await (const out of streaming(chunk, ctx.opts)) {
+        if (!opened) {
+          // 开口 = 首块样本到达（不是交付完成）：debug 摘要的 synth 即开口延迟
+          ctx.timing.synth += host.now() - mark;
+          opened = true;
+        } else {
+          // 流水铺开后的块间等待归播放：合成与播放交错的墙钟里分不出干净的两段
+          ctx.timing.play += host.now() - mark;
+        }
+        const staged = await deliver(host, out, { ...ctx.delivery, staging: stagingPath(host, subIndex) }, ctx.timing);
+        subIndex += 1;
+        mark = host.now();
+        if (!staged.delivered) return { code: fail(host, staged.error ?? "播放失败"), engineName: engine.name };
+        blockDelivered = true;
+        deliveredAny = true;
+      }
+    } catch (error) {
+      // 失败前的等待按是否开过口归边：分项之和与 total 的差值只剩播放层自己那一截
+      if (!opened) ctx.timing.synth += host.now() - mark;
+      else ctx.timing.play += host.now() - mark;
+      const reason = `引擎 "${engine.name}" 合成失败：${messageOf(error)}`;
+      if (!deliveredAny) return recoverWhole(ctx, engine, reason);
+      if (!blockDelivered) return recoverTail(ctx, engine, reason, chunks.slice(index).join(" "));
+      host.writeStderr(`say: ${reason}\n`);
+      return { code: EXIT_OK, engineName: engine.name };
+    }
+  }
+  return { code: EXIT_OK, engineName: engine.name };
+}
+
+/**
  * 出声卡模式的分块：播块 i 的同时合成块 i+1。
  * 合成快于播放（实测 RTF 0.37-0.54），因此流水线一起起来就不断流，
  * 整段耗时趋近于播放时长本身，而不是两者相加。
@@ -166,7 +221,8 @@ async function playChunks(ctx: SpeakContext, engine: EngineAdapter, chunks: read
 }
 
 export async function speakChunked(ctx: SpeakContext, engine: EngineAdapter, chunks: readonly string[]): Promise<Outcome> {
-  return ctx.delivery.target === null
-    ? playChunks(ctx, engine, chunks)
-    : mergeChunks(ctx, engine, chunks);
+  if (ctx.delivery.target !== null) return mergeChunks(ctx, engine, chunks);
+  // 引擎内流式优先：开口时间决定体验的出声卡场景里，块内流式比块间流水更早发声
+  if (engine.speakStreaming !== undefined) return streamChunks(ctx, engine, engine.speakStreaming, chunks);
+  return playChunks(ctx, engine, chunks);
 }

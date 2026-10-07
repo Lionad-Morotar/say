@@ -404,6 +404,25 @@ describe("gptsovits shim 会话（fake daemon 驱动协议）", () => {
     await expect(promise).rejects.toThrow(/ModuleNotFoundError|退出/);
   });
 
+  it("stdout 先于 exit 终止：按输出终止快速收敛而非空转（EOF-exit 空窗回归锚）", async () => {
+    const { engine } = makeShimEngine({
+      startup: (output) => output.write('{"type":"ready","engine":"gptsovits","version":"v2","device":"cpu"}\n'),
+      onRequest: (line, handle) => {
+        const req = JSON.parse(line) as { id: number };
+        const bytes = Buffer.alloc(2);
+        bytes.writeInt16LE(Math.round(0.5 * 32768));
+        handle.output.write(`${JSON.stringify({ type: "audio", id: req.id, pcm: bytes.toString("base64"), sample_rate: 32000, done: false })}\n`);
+        // 流先关、exit 300ms 后才 settle：真机 SIGKILL 后 EOF 与 exit 事件空窗的放大形态
+        handle.output.end();
+        setTimeout(() => handle.die("SIGKILL"), 300).unref();
+      },
+    });
+    const started = Date.now();
+    await expect(engine.speak("你好", speakOpts())).rejects.toThrow(/输出已终止/);
+    // 快速收敛 = 没在空窗里空转（修前形态：每圈一个 deadline 定时器，毫秒级烧穿堆）
+    expect(Date.now() - started).toBeLessThan(300);
+  });
+
   it("合成期进程死亡：EngineError 而非悬挂", async () => {
     const { engine } = makeShimEngine({
       startup: (output) => output.write('{"type":"ready","engine":"gptsovits","version":"v2","device":"cpu"}\n'),
