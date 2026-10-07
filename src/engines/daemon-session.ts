@@ -53,6 +53,27 @@ export const GPTSOVITS_WEIGHT_MARKERS: readonly string[] = [
 ];
 
 /**
+ * IndexTTS 权重面投影：主权重十件的文件级 size+mtime（install-engine 逐件下载校验落位）。
+ * 与 gptsovits 的 .install-ok marker 投影同构——indextts 权重是单文件形态无 archive 解压标记，
+ * 文件本身的安装 mtime 即「这套权重何时被安装」的投影；升级重装重写文件 → mtime 变 → 旧 daemon
+ * 握手失效自动重拉。auto 层（checkpoints/hf_cache 首跑自拉四件）刻意排除：那是引擎 fallback 链
+ * 的运行时产物而非安装事件，纳入会把自拉噪声当权重变更。清单与 shim 侧 WEIGHT_MARKERS 逐条一致，
+ * 由 test/daemon-fingerprint.test.ts 双实现对拍钉死；manifest 增删两处同改。
+ */
+export const INDEXTTS_WEIGHT_MARKERS: readonly string[] = [
+  "checkpoints/gpt.pth",
+  "checkpoints/codec.pth",
+  "checkpoints/s2mel.pth",
+  "checkpoints/qwen0.6bemo4-merge/model.safetensors",
+  "checkpoints/config.yaml",
+  "checkpoints/feat1.pt",
+  "checkpoints/feat2.pt",
+  "checkpoints/wav2vec2bert_stats.pt",
+  "checkpoints/multilingual_zh_ja_yue_char_del.tiktoken",
+  "index-tts/examples/voice_01.wav",
+];
+
+/**
  * 权重指纹：对 marker 清单（rel 路径升序）逐条取 `rel|size|mtime_ms`（stat 失败记 `rel|missing|0`），
  * 换行连接后 sha256 hex。与 Python shim 的同名实现必须逐字节一致——
  * 跨语言公式漂移会让每次握手失败、静默永久降级 per-call，故由对拍测试钉死（daemon-fingerprint.test.ts）。
