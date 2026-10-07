@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 // 角色参考音频采集管线入口（s-voicepack）。
-// 模式：默认 = 采集+处理+转写+验证+冒烟（幂等：达标资产跳过）；--verify = 只审计不下载。
+// 模式：默认 = 采集+处理+转写+验证+冒烟（幂等：达标资产跳过）；--verify = 只审计不下载；
+// --peon = peon-ping D.Va 增补通道（17 条干音 sha256 校验下载，幂等，engine-v2 S7）。
 // 证据链契约：所有真实执行（下载/处理/转写/合成）落 docs/research/voicepack/raw-log.jsonl，
 // 报告数字只从该日志聚合；skip 不入日志。
 import path from "node:path";
 import { CHARACTERS, MANIFEST } from "./lib/manifest.mjs";
 import { VOICES_DIR, VOICEPACK_DOCS, RAW_LOG } from "./lib/config.mjs";
 import { assessCharacter, assessVariant, assessSmokeDuration, measureWav } from "./lib/verify.mjs";
+import { appendVoiceLog } from "./lib/log.mjs";
+import { checkPeonSet, judgePeonFile, measurePeonFile, peonDvaTargets, runPeonChannel } from "./lib/peon-pack.mjs";
 
 const argv = process.argv.slice(2);
 const verifyOnly = argv.includes("--verify");
+const peonOnly = argv.includes("--peon");
 const onlyIdx = argv.indexOf("--only");
 let only = null;
 if (onlyIdx >= 0) {
@@ -59,6 +63,21 @@ async function verifyAll() {
         reasons: vr.reasons,
       });
     }
+    // dva 的 peon-ping 增补集随 --verify 一并审计：钉版清单已声明即「应产出」，
+    // 缺档或校验不符按同纪律计入审计失败
+    if (c === "dva") {
+      const judged = [];
+      for (const t of peonDvaTargets()) {
+        judged.push({ file: t.file, verdict: judgePeonFile(t, await measurePeonFile(t.dest)) });
+      }
+      const set = checkPeonSet(judged);
+      if (!set.ok) allOk = false;
+      rows.push({
+        character: "dva:peon-ping",
+        asset: set.ok ? "PASS" : "FAIL",
+        reasons: [...set.missing.map((f) => `缺档 ${f}`), ...set.corrupt.map((f) => `sha256 校验不符 ${f}`)],
+      });
+    }
   }
   console.log(JSON.stringify({ raw_log: RAW_LOG, results: rows }, null, 2));
   process.exit(allOk ? 0 : 1);
@@ -66,6 +85,13 @@ async function verifyAll() {
 
 if (verifyOnly) {
   await verifyAll();
+} else if (peonOnly) {
+  // peon-ping 增补通道独立于主参考 candidates 链：17 条是分句训练集候选而非参考段，
+  // 不参与 fail-fast，通道内逐条独立判定，部分失败不拖累已达标条目
+  const r = await runPeonChannel(undefined, { log: (e) => appendVoiceLog(RAW_LOG, e) });
+  for (const f of r.failures) console.error(`[fail] peon-ping ${f}`);
+  console.log(JSON.stringify(r, null, 2));
+  process.exit(r.ok ? 0 : 1);
 } else {
   const hasCandidates = targets.some((c) => MANIFEST[c].candidates.length > 0);
   if (!hasCandidates) {
