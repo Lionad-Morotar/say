@@ -33,7 +33,7 @@ say --engine voxcpm "流式引擎试一句"   # 逐次指定，不改 config
 SAY_ENGINE=indextts say "节奏引擎"     # 会话级指定
 ```
 
-默认引擎按 locale 自动落预设（首次写入 config 一次性选定）：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。
+默认预设按 locale 每次调用现场解析：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。要固化引擎与嗓音，用 `say engine use` 写 config。
 
 ## 调用面
 

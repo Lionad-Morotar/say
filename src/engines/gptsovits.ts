@@ -62,7 +62,9 @@ export function resolveLabPython(labDir: string, host: Host): string {
 /**
  * 引擎安装面的文件判据，与 scripts/lib/engine-status.mjs 的 assessEngine 同构：
  * venv 解释器（spec.pythonPath 已按三形态探测）+ 仓库内核 + 两份解压资产 + open_jtalk 字典
- * （archive 形态须 .install-ok 完成标记，目录存在只说明解压开始过）。判据漂移两处同改。
+ * + NLTK 数据三件（英文文本路径隐藏依赖，fresh 面缺失时合成 LookupError，
+ * 落位随 manifest 的 gptsovits 清单；archive 形态须 .install-ok 完成标记，目录存在只说明解压开始过）。
+ * 判据漂移两处同改（manifest 侧 scripts/lib/engine-manifest.mjs）。
  */
 export function gptsovitsMissingAssets(spec: GptsovitsLabSpec, host: Host): string[] {
   const required = [
@@ -71,6 +73,9 @@ export function gptsovitsMissingAssets(spec: GptsovitsLabSpec, host: Host): stri
     `${spec.repoDir}/GPT_SoVITS/pretrained_models/.install-ok`,
     `${spec.repoDir}/GPT_SoVITS/text/G2PWModel/.install-ok`,
     `${spec.labDir}/open_jtalk_dic_utf_8-1.11/.install-ok`,
+    `${spec.labDir}/venv/nltk_data/tokenizers/punkt_tab/.install-ok`,
+    `${spec.labDir}/venv/nltk_data/taggers/averaged_perceptron_tagger_eng/.install-ok`,
+    `${spec.labDir}/venv/nltk_data/corpora/cmudict/.install-ok`,
   ];
   return required.filter((path) => !host.fileExists(path));
 }
