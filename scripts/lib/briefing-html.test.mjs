@@ -69,3 +69,19 @@ test("用户可见文本经 HTML 转义，注入面在组装层收口", () => {
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
 });
+
+test("ja 进域：语种集由 texts 键驱动，默认链与矩阵列自动扩第三语种", () => {
+  const html = renderBriefingHtml({
+    ...BASE,
+    defaultChain: { ...BASE.defaultChain, ja: { engine: "gptsovits", voice: "frieren" } },
+    texts: { ...BASE.texts, ja: "今日の上海はいい天気です" },
+    rows: BASE.rows.map((row) => ({
+      ...row,
+      cells: { ...row.cells, ja: [{ voice: "frieren", file: "audio/gptsovits-ja-frieren.wav", exists: true }] },
+    })),
+  });
+  assert.match(html, /ja → <code>gptsovits<\/code> \+ <code>frieren<\/code>/);
+  assert.match(html, /<th>ja<\/th>/);
+  assert.match(html, /audio\/gptsovits-ja-frieren\.wav/);
+  assert.match(html, /3 语种/);
+});

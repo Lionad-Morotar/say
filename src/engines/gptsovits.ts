@@ -20,12 +20,16 @@ const DEFAULT_VOICE_KEY = "default";
 const ZH_RATIO_THRESHOLD = 0.3;
 
 /**
- * 文本语言判定（zh/en），default 参考选择与请求的 text_lang 共用同一真源：
+ * 文本语言判定（zh/en/ja），default 参考选择与请求的 text_lang 共用同一真源：
  * 引擎侧 auto 检测对短中文文本会误判 ja（fast_langdetect 的汉字共享缺陷，实测坐实），
- * 误判的结局是日文音素读中文——参考音频只有 zh/en 时这类语种面本就该由消费方钉死。
+ * 误判的结局是日文音素读中文——语种面本就该由消费方钉死。
+ * 假名优先：中文正文永不出现假名（零误判面），含 ぀-ヿ 即 ja。
+ * 已知边界：纯汉字无假名的日文句（汉文训读体外罕见）不可分，按 zh 走——
+ * 与误判方向相反的代价是中文音素读汉文，弱于 ja 条件化误伤中文的代价。
  * 纯标点/数字文本归 zh（中文底线是 D10 修订后的默认体验）。
  */
-export function detectTextLang(text: string): "zh" | "en" {
+export function detectTextLang(text: string): "zh" | "en" | "ja" {
+  if (/[぀-ヿ]/.test(text)) return "ja";
   const zhChars = (text.match(/[一-鿿]/g) ?? []).length;
   const latinChars = (text.match(/[A-Za-z]/g) ?? []).length;
   if (zhChars === 0) return latinChars > 0 ? "en" : "zh";
@@ -182,17 +186,20 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
 
   const synth = options.synth ?? createShimSynth(spec, host);
 
-  /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义） */
-  const defaultRequirement = async (lang: "zh" | "en"): Promise<RefRequirement> => {
-    const audioPath = `${defaultVoiceDir}/default-${lang}.wav`;
-    const textPath = `${defaultVoiceDir}/default-${lang}.txt`;
+  /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义）。
+   * ja 无中性参考资产（随仓只备 zh/en），参考降级取 default-zh 而 text_lang 独立按 ja 条件化——
+   * 音色带中文腔但发音正确；要地道日音走角色嗓 frieren（日配主参考）。补 default-ja.wav/.txt 即自动接上。 */
+  const defaultRequirement = async (lang: "zh" | "en" | "ja"): Promise<RefRequirement> => {
+    const refLang = lang === "ja" ? "zh" : lang;
+    const audioPath = `${defaultVoiceDir}/default-${refLang}.wav`;
+    const textPath = `${defaultVoiceDir}/default-${refLang}.txt`;
     if (!host.fileExists(audioPath) || !host.fileExists(textPath)) {
-      throw new EngineError(`gptsovits 内置 default 参考（${lang}）资产缺失：${defaultVoiceDir} 下应有 default-${lang}.wav 与 .txt`);
+      throw new EngineError(`gptsovits 内置 default 参考（${refLang}）资产缺失：${defaultVoiceDir} 下应有 default-${refLang}.wav 与 .txt`);
     }
     return {
       refAudioPath: audioPath,
       promptText: transcriptOf(await host.readFileText(textPath)),
-      promptLang: lang,
+      promptLang: refLang,
     };
   };
 
@@ -244,7 +251,7 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
     return outPath;
   };
 
-  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" ? lang : "multi");
+  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" || lang === "ja" ? lang : "multi");
 
   return {
     name: GPTSOVITS_ENGINE,

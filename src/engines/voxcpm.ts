@@ -126,7 +126,7 @@ export function createVoxcpmEngine(options: VoxcpmEngineOptions): EngineAdapter 
 
   const ownsVoice = (name: string): boolean => splitVoiceName(host, voicesDir, name) !== null;
 
-  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" ? lang : "multi");
+  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" || lang === "ja" ? lang : "multi");
 
   const buildStream = async function* (text: string, opts: SpeakOptions): AsyncGenerator<Extract<AudioOut, { type: "pcm" }>> {
     const requirement = await requirementOf(opts.voice);

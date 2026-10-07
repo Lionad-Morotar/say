@@ -250,6 +250,13 @@ describe("detectTextLang", () => {
     expect(detectTextLang("mostly english words with 一点中文")).toBe("en");
     expect(detectTextLang("1, 2, 3!")).toBe("zh");
   });
+
+  it("含假名即判 ja（假名优先：中文文本永不出现假名，零误判面；纯汉字日文句不可分是已知边界）", () => {
+    expect(detectTextLang("今日はいい天気ですね")).toBe("ja");
+    expect(detectTextLang("猫はかわいい")).toBe("ja");
+    expect(detectTextLang("スケジュール")).toBe("ja"); // 全片假名也认
+    expect(detectTextLang("今天天气不错")).toBe("zh"); // 汉字不受假名规则波及
+  });
 });
 
 describe("gptsovits.speak（注入假合成器）", () => {
@@ -272,6 +279,15 @@ describe("gptsovits.speak（注入假合成器）", () => {
     await engine.speak("hello there", speakOpts());
     expect(calls[0]!.refAudioPath).toBe(`${DEFAULT_DIR}/default-en.wav`);
     expect(calls[0]!.promptLang).toBe("en");
+  });
+
+  it("default 嗓日文文本：参考落 default-zh（无 ja 中性参考的降级面），text_lang 独立按 ja 条件化", async () => {
+    const { synth, calls } = fakeSynth();
+    const { engine } = makeEngine(synth);
+    await engine.speak("こんにちは世界", speakOpts());
+    expect(calls[0]!.refAudioPath).toBe(`${DEFAULT_DIR}/default-zh.wav`);
+    expect(calls[0]!.promptLang).toBe("zh");
+    expect(calls[0]!.textLang).toBe("ja");
   });
 
   it("角色嗓：ref.wav 一比一映射、转写剥离溯源注释、meta language 作 prompt_lang", async () => {

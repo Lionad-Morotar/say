@@ -144,7 +144,7 @@ export function createFireredEngine(options: FireredEngineOptions): EngineAdapte
 
   const ownsVoice = (name: string): boolean => splitVoiceName(host, voicesDir, name) !== null;
 
-  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" ? lang : "multi");
+  const languageOf = (lang: string | null): VoiceInfo["lang"] => (lang === "en" || lang === "zh" || lang === "ja" ? lang : "multi");
 
   return {
     name: FIRERED_ENGINE,

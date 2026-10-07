@@ -24,7 +24,7 @@ export interface VoiceInfo {
   name: string;
   engine: string;
   /** 音色天然携带的语言倾向，供上层做语言路由或列举分组 */
-  lang: "en" | "zh" | "multi";
+  lang: "en" | "zh" | "ja" | "multi";
 }
 
 export interface SpeakOptions {

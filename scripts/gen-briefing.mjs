@@ -19,13 +19,17 @@ const FALLBACK_PREFIX = "fallback: ";
 const TEXTS = {
   zh: "今天上海天气很好，微风拂面，适合出门散步。",
   en: "The weather in Shanghai is lovely today, and a gentle breeze is blowing.",
+  ja: "今日の上海はいい天気で、そよ風が吹いています。",
 };
 
-/** 矩阵：引擎 × 语种 × 嗓。frieren 跨语行取语言变体（主参考是日配），dva 以 en 主参考跨语读中文 */
+/** 矩阵：引擎 × 语种 × 嗓。frieren 跨语行取语言变体（主参考是日配），dva/lucy 以 en 主参考跨语读中文 */
 const ENGINES = ["gptsovits", "voxcpm", "indextts", "firered"];
+/** ja 行嗓位：default（gptsovits 走 default-zh 参考降级，其余引擎内置说话人）+ frieren 日配主参考；
+ * 角色跨语（dva/lucy 读日文）不进本矩阵——三引擎对 ja 条件化质量未经裁决面背书，先保 ja×2 核心格 */
 const VOICES = {
-  zh: ["default", "frieren-zh", "dva"],
-  en: ["default", "frieren-en", "dva"],
+  zh: ["default", "frieren-zh", "dva", "lucy"],
+  en: ["default", "frieren-en", "dva", "lucy"],
+  ja: ["default", "frieren"],
 };
 
 /** 蓝图票 07 Resolution 裁决表摘要（评测报告见 docs/research/261006-*.md） */
@@ -33,24 +37,26 @@ const ENGINE_VERDICTS = {
   gptsovits: { hot: "1.60-2.75s PASS（CPU）", cold: "4.74-5.61s PASS", verdict: "默认引擎：唯一中英热延迟双 PASS + 角色资产零改造映射" },
   voxcpm: { hot: "3.49s MARGINAL（整句）/ 首包 0.21-0.54s（流式）", cold: "3.3-3.6s PASS", verdict: "质量上限选项：流式形态接线，整句热延迟不过线不作默认" },
   indextts: { hot: "3.9-5.7s FAIL", cold: "9.17s 达标", verdict: "可切换：duration_factor 节奏控制最强，许可商用线中英不一" },
-  firered: { hot: "4.45-5.50s FAIL", cold: "10.0s 压线", verdict: "可切换：指令控制面最全（语速/pitch/volume），负担最重 20.8GB" },
+  firered: { hot: "4.45-5.50s FAIL", cold: "10.0s 压线", verdict: "可切换：Instruct 控制面（语速/pitch/volume）能力强但一期未接线（票 08 backlog），资产最重（lab 实测 39G）" },
 };
 
 const VOICE_NOTES = [
-  { name: "default", note: "引擎内置中性参考：gptsovits 随仓 assets（zh/en 各一段），voxcpm 走文本指令嗓，indextts/firered 用仓库自带示例参考" },
-  { name: "frieren-zh / frieren-en", note: "芙莉莲官方中配（李蝉妃）/英配（Mallory Roddak）素材，零样本克隆" },
+  { name: "default", note: "引擎内置参考、性别不一（261007 试听坐实）：gptsovits/indextts 官方示例参考为男声；firered 自带示例参考为女声；voxcpm 走文本指令嗓（voice creation，性别随指令）。要女声中性嗓勿用 default 格" },
+  { name: "frieren-zh / frieren-en / frieren(ja)", note: "芙莉莲官方中配（李蝉妃）/英配（Mallory Roddak）/日配主参考（種﨑敦美，ja 行裸名 frieren 即落它），零样本克隆。zh 参考 261007 修复：原 20.8s 窗混入村长（男声）台词致克隆出男声，现取 3.24s 芙莉莲独句；en 窗 0-8.4s 前三句（原 14s 致 voxcpm 塌男声）" },
   { name: "dva", note: "D.Va 官方英配（Charlet Chung）素材；zh 行是 en 参考跨语读中文，可听各引擎跨语能力" },
+  { name: "lucy", note: "露西 官方英配（Emi Lo，赛博浪客 S1E2）素材，demucs 分离 v1 资产；zh 行同为跨语读法。干净音源补采另行推进" },
 ];
 
 const KNOWN_ISSUES = [
   "IndexTTS duration_factor=1.0 时输出定长（zh/en 异文本同为 4.748s）：听感若见「不同句子同长」即此现象，-r 语速参数走倍率映射可解",
-  "四引擎语种域钉死 zh/en：ja 文本按字符占比被判 zh 走中文条件化（音质劣化无报错），角色 meta language=ja 在 say engine 嗓清单里标 multi",
+  "ja 语种域 261007 进域：假名文本走 ja 条件化（四引擎官方面全支持——GPT-SoVITS ja 码、IndexTTS LANGUAGES、FireRed Japanese tag、VoxCPM2 30 语）；已知边界为纯汉字无假名日文句不可分按 zh 走",
+  "gptsovits 的 ja default 格是 default-zh 参考降级（无日音中性资产），音色带中文腔、发音按 ja 条件化；地道日音听 frieren 格。参考长音频（>10s 实测）会致 voxcpm 零样本失稳（塌男声/无浊音），角色资产已窗规整至 3-10s",
   "样音为单次合成实例，延迟数字以裁决表实测为准（样音采集走 -o 落盘路径，不含播放流水）",
 ];
 
 const PENDING_DECISIONS = [
-  "ja 是否进语种域（角色 frieren 主参考为日配）：产品决策，进域则需逐引擎加语种条件化面，不进则 ja 文本持续按 zh 条件化",
   "默认嗓改判：试听后把 config voice 改成任意嗓位（见改判指引），或维持 frieren-zh",
+  "ja 进域后的质量背书：本批 ja×8 格样音为四引擎 ja 条件化首采，听感若不过关再裁决 ja 默认链与逐引擎优化面",
 ];
 
 /** 标准 PCM wav 头解析出秒长：byteRate 与 data 块大小都在头部固定偏移，样音量级整读无压力 */
@@ -123,7 +129,7 @@ export function main() {
   const rows = [];
   for (const engine of ENGINES) {
     const cells = {};
-    for (const lang of ["zh", "en"]) {
+    for (const lang of Object.keys(VOICES)) {
       // 每格 = 该语种全部嗓位逐个采（角色是矩阵第三维）；引擎未就绪整格缺采
       cells[lang] = ready.includes(engine)
         ? VOICES[lang].map((voice) => captureSample(engine, lang, voice))
@@ -137,6 +143,7 @@ export function main() {
     defaultChain: {
       zh: { engine: "gptsovits", voice: "frieren-zh" },
       en: { engine: "sherpa", voice: "af_maple" },
+      ja: { engine: "gptsovits", voice: "frieren" },
     },
     texts: TEXTS,
     engines: ENGINES.map((name) => ({ name, ...ENGINE_VERDICTS[name] })),
@@ -146,7 +153,7 @@ export function main() {
     pendingDecisions: PENDING_DECISIONS,
   });
   writeFileSync(HTML_PATH, html);
-  const cells = rows.flatMap((row) => [...row.cells.zh, ...row.cells.en]);
+  const cells = rows.flatMap((row) => Object.values(row.cells).flat());
   const total = cells.filter((sample) => sample.exists).length;
   process.stdout.write(`[gen-briefing] ${total}/${cells.length} 格在盘，简报：${HTML_PATH}\n`);
 }

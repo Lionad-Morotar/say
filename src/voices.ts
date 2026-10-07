@@ -96,7 +96,7 @@ function variantsOf(meta: unknown): ReadonlySet<string> {
   return keys;
 }
 
-/** meta.json 里声明的语言。en/zh 之外的（如日配）按多语记，列表分组与语言路由都够用 */
+/** meta.json 里声明的语言。en/zh/ja 进路由面，其余（ko 等）按多语记，列表分组与语言路由都够用 */
 export function cloneVoiceLanguage(meta: unknown, variant: string | null): string | null {
   if (typeof meta !== "object" || meta === null) return null;
   const record = meta as Record<string, unknown>;

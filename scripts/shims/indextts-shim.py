@@ -77,7 +77,7 @@ def main() -> int:
             ref = req.get("ref_audio_path")
             if not ref:
                 raise KeyError("ref_audio_path")
-            # 协议 text_lang 即引擎 lang：Node 侧自判 zh/en 下传，不依赖引擎侧检测
+            # 协议 text_lang 即引擎 lang：Node 侧自判 zh/en/ja 下传（LANGUAGES 表 ja 一等），不依赖引擎侧检测
             lang = req.get("text_lang") or "zh"
             kwargs = {}
             duration_factor = req.get("duration_factor")

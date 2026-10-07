@@ -168,6 +168,12 @@ describe("resolveConfig：flag > env > config > 默认", () => {
       expect(config.voice).toBe("af_maple");
     });
 
+    it("locale=ja 落 ja 预设（gptsovits + 芙莉莲日配主参考，261007 ja 进域）", () => {
+      const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "ja" });
+      expect(config.voice).toBe("frieren");
+      expect(config.engine).toBe("gptsovits");
+    });
+
     it("locale 未传落缺省 en（编排层未探测时的安全落点）", () => {
       const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" } });
       expect(config.voice).toBe("af_maple");

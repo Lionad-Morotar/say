@@ -11,7 +11,7 @@ src/engines/gptsovits-protocol.ts 是同一契约的另一侧执行面。
   不 import Instruct 类规避；若上游修复且需要 Instruct 指令面
   （voice_design / acoustic_edit），经协议新增可选字段另立扩展。
 - language tag 是首字母大写全称白名单（MULTI_LANG_TAGS：Chinese/English/...），
-  协议 text_lang（zh/en）在 shim 内映射，不透传原值。
+  协议 text_lang（zh/en/ja）在 shim 内映射，不透传原值。
 - prompt_text 必带：FireRed 克隆质量依赖参考转写与音频内容严格对应，缺转写按
   请求级错误回报（进程存活语义）。
 - FIRERED_DEVICE：设备由 Node 侧 spawn env 注入（darwin 默认 mps），shim 不读
@@ -90,9 +90,9 @@ def main() -> int:
             samples = samples.reshape(-1, channels).mean(axis=1)
         return torch.from_numpy(samples).unsqueeze(0), sr
 
-    # 协议 text_lang（zh/en）→ FireRed 白名单 tag（MULTI_LANG_TAGS 首字母大写全称）；
+    # 协议 text_lang（zh/en/ja）→ FireRed 白名单 tag（MULTI_LANG_TAGS 首字母大写全称）；
     # 白名单外断言崩进程，映射表钉死两项与 Node 侧 detectTextLang 的产出域对齐
-    LANG_TAGS = {"zh": "Chinese", "en": "English"}
+    LANG_TAGS = {"zh": "Chinese", "en": "English", "ja": "Japanese"}
 
     for line in sys.stdin:
         stripped = line.strip()

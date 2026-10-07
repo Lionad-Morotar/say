@@ -35,8 +35,8 @@ function cellHtml(samples) {
  * 组装试听简报 HTML。
  * data 契约：
  *   generatedAt          ISO 时间串
- *   defaultChain         { zh: {engine,voice}, en: {engine,voice} } 当前内置表快照
- *   texts                { zh, en } 矩阵统一的试听文本
+ *   defaultChain         { zh, en, ja: {engine,voice} } 当前内置表快照
+ *   texts                { zh, en, ja } 矩阵统一的试听文本；键集即语种真源（渲染面以此驱动列序）
  *   engines              [{ name, hot, cold, verdict }] 蓝图裁决表摘要行
  *   rows                 [{ engine, cells: { zh: sample[], en: sample[] } }] 引擎×语种样音格，
  *                        每格是该语种下各嗓位的 sample 数组（角色=矩阵第三维），
@@ -46,6 +46,8 @@ function cellHtml(samples) {
  *   pendingDecisions     [string] 待用户裁决清单（ja 语种域等）
  */
 export function renderBriefingHtml(data) {
+  // 语种集以 texts 键为唯一真源（ja 进域后渲染面不得再硬编码 zh/en 二元）
+  const langs = Object.keys(data.texts);
   const engineRows = data.engines
     .map(
       (engine) =>
@@ -55,9 +57,17 @@ export function renderBriefingHtml(data) {
   const voiceItems = data.voices.map((voice) => `<li><code>${esc(voice.name)}</code>：${esc(voice.note)}</li>`).join("\n");
   const matrixRows = data.rows
     .map(
-      (row) => `<tr><th>${esc(row.engine)}</th>${cellHtml(row.cells.zh)}${cellHtml(row.cells.en)}</tr>`,
+      (row) => `<tr><th>${esc(row.engine)}</th>${langs.map((lang) => cellHtml(row.cells[lang])).join("")}</tr>`,
     )
     .join("\n");
+  const chainSpans = Object.entries(data.defaultChain)
+    .map(
+      ([lang, entry]) =>
+        `  <span class="chain">${esc(lang)} → <code>${esc(entry.engine)}</code> + <code>${esc(entry.voice)}</code></span>`,
+    )
+    .join("\n");
+  const textList = langs.map((lang) => `${esc(lang)}：${esc(data.texts[lang])}`).join("；");
+  const langHeader = langs.map((lang) => `<th>${esc(lang)}</th>`).join("");
   const issues = data.knownIssues.map((issue) => `<li>${esc(issue)}</li>`).join("\n");
   const pending = data.pendingDecisions.map((item) => `<li>${esc(item)}</li>`).join("\n");
 
@@ -85,8 +95,7 @@ export function renderBriefingHtml(data) {
 <h1>say 引擎 v2 默认裁决试听简报</h1>
 <p>生成于 ${esc(data.generatedAt)}。当前默认链（config 内置表，voice="default" 关键字按系统语言自动落位）：</p>
 <p>
-  <span class="chain">zh → <code>${esc(data.defaultChain.zh.engine)}</code> + <code>${esc(data.defaultChain.zh.voice)}</code></span>
-  <span class="chain">en → <code>${esc(data.defaultChain.en.engine)}</code> + <code>${esc(data.defaultChain.en.voice)}</code></span>
+${chainSpans}
 </p>
 
 <h2>引擎裁决表（2026-10-06/07 M3 Max 实测）</h2>
@@ -95,10 +104,10 @@ export function renderBriefingHtml(data) {
   ${engineRows}
 </table>
 
-<h2>样音矩阵（四引擎 × 中英 × 三嗓）</h2>
-<p>统一试听文本——zh：${esc(data.texts.zh)}；en：${esc(data.texts.en)}</p>
+<h2>样音矩阵（${data.rows.length} 引擎 × ${langs.length} 语种 × 嗓位）</h2>
+<p>统一试听文本——${textList}</p>
 <table>
-  <tr><th>引擎 \\ 语种</th><th>zh</th><th>en</th></tr>
+  <tr><th>引擎 \\ 语种</th>${langHeader}</tr>
   ${matrixRows}
 </table>
 <h3>嗓位说明</h3>

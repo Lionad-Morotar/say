@@ -27,7 +27,7 @@
 | `ref_audio_path` | 参考音频的 **shim 可见绝对路径**（零样本克隆必带） |
 | `prompt_text` | 参考音频的文字转写，必须与音频内容严格对应 |
 | `prompt_lang` | 参考音频语言（api_v2 枚举：`auto/auto_yue/en/zh/ja/yue/ko/all_zh/...`） |
-| `text_lang` | 合成文本语言，**Node 侧自判**（中英字符占比 heuristic，与 `prompt_lang` 的 default 参考判定同源）。不用引擎侧 `"auto"`：其对短中文文本会误判 ja（fast_langdetect 汉字共享缺陷），误判即用日文音素读中文 |
+| `text_lang` | 合成文本语言（zh/en/ja），**Node 侧自判**（假名优先 → 中英字符占比 heuristic，与 default 参考判定同源；261007 ja 进语种域，票 09 裁决）。不用引擎侧 `"auto"`：其对短中文文本会误判 ja（fast_langdetect 汉字共享缺陷），误判即用日文音素读中文——反之纯汉字无假名日文句不可分按 zh 走，是接受的边界 |
 | `speed_factor` | 语速倍率（1.0 = 原速；say 侧 wpm→倍率换算后传入） |
 | `control`（可选） | 引擎侧自然语言控制指令（S4 起，VoxCPM voice creation 首个消费方）。语义由 shim 定义：VoxCPM shim 把它拼成 `(指令)正文` 的括号前缀（control 与文本同通道、无独立参数位的引擎形态）；不出声的 shim 忽略此字段。Node 侧不发默认值——无指令时字段缺席 |
 | `duration_factor`（可选） | 时长倍率（S5 起，IndexTTS 消费）：值越大音频越长、语速越慢，1.0 = 原速，合法域 0.5-2.0（与 `speed_factor` 的语速倍率互为倒数——语义反向，故独立字段不复用）。Node 侧由 `-r`（wpm）换算：`1 / wpmToSpeed(rateWpm)`，wpm 锚点与 clamp 域跨引擎同源。缺席 = 引擎默认 1.0 |

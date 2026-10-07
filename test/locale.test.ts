@@ -42,8 +42,14 @@ describe("detectLocale：AppleLanguages 优先、LANG 兜底、缺省 en", () =>
     await expect(detectLocale(host)).resolves.toBe("en");
   });
 
+  it("AppleLanguages 的 ja-JP 归一为 ja（261007 ja 进语种域）", async () => {
+    const { host } = createFakeHost({ spawnOutcome: outcomes('(\n    "ja-JP",\n    "en-US"\n)\n') });
+    await expect(detectLocale(host)).resolves.toBe("ja");
+  });
+
   it.each([
     ["zh_CN.UTF-8", "zh"],
+    ["ja_JP.UTF-8", "ja"],
     ["C", "en"],
     ["POSIX", "en"],
     ["fr_FR.UTF-8", "en"],

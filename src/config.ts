@@ -41,6 +41,9 @@ const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets"]
 export const BUILTIN_PRESETS: Readonly<Record<string, PresetDefinition>> = {
   en: { voice: "af_maple", engine: "sherpa" },
   zh: { voice: "frieren-zh", engine: "gptsovits" },
+  // ja（票 09 进域）：芙莉莲日配主参考是四引擎唯一地道日音资产（种崎敦美官方素材），
+  // 与 zh 行用角色嗓作默认的先例一致；gptsovits default-ja 无中性参考只能中文腔降级，不作 ja 默认。
+  ja: { voice: "frieren", engine: "gptsovits" },
 };
 
 export type ConfigFileParse = { ok: true; value: ConfigFile } | { ok: false; error: string };
