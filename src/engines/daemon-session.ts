@@ -470,10 +470,12 @@ async function unlinkQuiet(path: string): Promise<void> {
   }
 }
 
+/** lazy 拉起轮询的活动等待：必须 ref 保活。真机实证——unref 计时器 + 已 unref 的 child +
+ * 不持循环的 exit promise 三者叠加，轮询窗口内宿主事件循环完全空心，Node 静默 exit 0 不出声
+ * （vitest 替身环境由 runner 持活循环，此洞测不出，只能真机暴露） */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref();
+    setTimeout(resolve, ms);
   });
 }
 
