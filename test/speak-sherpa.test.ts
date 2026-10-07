@@ -52,7 +52,13 @@ function fakeSynth() {
 
 async function invoke(options: FakeHostOptions, argv: readonly string[], synth: SherpaSynth = fakeSynth().synth) {
   // files 是整体替换而不是叠加：缺资产的用例必须能把默认那套模型文件真的抹掉
-  const fake = createFakeHost({ tmpDir: TMP, ...options, files: options.files ?? KOKORO_FILES });
+  // 钉住 sherpa：裸调在 v2 新语义下落 locale 预设引擎，不再是 sherpa 巧合默认
+  const fake = createFakeHost({
+    tmpDir: TMP,
+    ...options,
+    env: { HOME: "/h", SAY_ENGINE: "sherpa", ...options.env },
+    files: options.files ?? KOKORO_FILES,
+  });
   const code = await run(argv, {
     host: fake.host,
     paths: resolvePaths(fake.host.env),
@@ -127,7 +133,7 @@ describe("进程内引擎的 pcm 交付：默认出声卡", () => {
   });
 
   it("目标目录不可写时按失败处理，不留半截产物冒充成功", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, files: KOKORO_FILES });
+    const fake = createFakeHost({ tmpDir: TMP, env: { HOME: "/h", SAY_ENGINE: "sherpa" }, files: KOKORO_FILES });
     const host = {
       ...fake.host,
       writeFile: async () => {
@@ -151,7 +157,7 @@ describe("进程内引擎的 pcm 交付：默认出声卡", () => {
 
 describe("落盘失败的收尾", () => {
   it("改名失败时清掉 PID 临时文件，不在目标目录留孤儿", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h" }, files: KOKORO_FILES });
+    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h", SAY_ENGINE: "sherpa" }, files: KOKORO_FILES });
     const host = {
       ...fake.host,
       renameFile: async () => {
@@ -174,7 +180,7 @@ describe("落盘失败的收尾", () => {
   });
 
   it("写盘失败时不去改名，但把可能存在的半截临时文件清掉", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h" }, files: KOKORO_FILES });
+    const fake = createFakeHost({ tmpDir: TMP, pid: 99, env: { HOME: "/h", SAY_ENGINE: "sherpa" }, files: KOKORO_FILES });
     const host = {
       ...fake.host,
       writeFile: async () => {

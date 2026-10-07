@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_PRESETS, parseConfigFile, resolveConfig } from "../src/config.ts";
 
+// 零配置参照值：voice/引擎双缺席整套落 locale 缺省 en 的预设（试听裁决三语默认）
 const DEFAULTS = {
-  engine: "sherpa",
-  voice: null,
+  engine: "firered",
+  voice: "default",
   rateWpm: 175,
   fallback: "system",
   debug: false,
@@ -24,9 +25,10 @@ describe("parseConfigFile：预设分节与选择键", () => {
 });
 
 describe("内置通用嗓预设", () => {
-  it("en 走 kokoro 默认嗓（v1 链不倒退），zh 走 gptsovits + 中文角色嗓（S8 默认裁决）", () => {
-    expect(BUILTIN_PRESETS.en).toEqual({ voice: "af_maple", engine: "sherpa" });
-    expect(BUILTIN_PRESETS.zh).toEqual({ voice: "frieren-zh", engine: "gptsovits" });
+  it("en 走 firered 内置示例参考嗓，zh 走 indextts + 中文角色嗓（261007 试听裁决三语默认）", () => {
+    expect(BUILTIN_PRESETS.en).toEqual({ voice: "default", engine: "firered" });
+    expect(BUILTIN_PRESETS.zh).toEqual({ voice: "frieren-zh", engine: "indextts" });
+    expect(BUILTIN_PRESETS.ja).toEqual({ voice: "frieren", engine: "gptsovits" });
   });
 });
 
@@ -79,9 +81,9 @@ describe("resolveConfig 预设机制", () => {
 
   it("内置通用预设零配置即可用：--preset en / SAY_PRESET=zh 直接生效", () => {
     const { config: en } = resolveConfig({ env: { SAY_PRESET: "en" }, file: null, flags: {} });
-    expect(en).toMatchObject({ engine: "sherpa", voice: "af_maple" });
+    expect(en).toMatchObject({ engine: "firered", voice: "default" });
     const { config: zh } = resolveConfig({ env: {}, file: null, flags: { preset: "zh" } });
-    expect(zh).toMatchObject({ engine: "gptsovits", voice: "frieren-zh" });
+    expect(zh).toMatchObject({ engine: "indextts", voice: "frieren-zh" });
   });
 
   it("未登记的预设名降级并警告，警告点名可用清单", () => {

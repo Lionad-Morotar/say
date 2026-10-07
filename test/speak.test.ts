@@ -12,7 +12,8 @@ const CONFIG = "/h/.config/say/config.toml";
 function setup(options: FakeHostOptions = {}) {
   const fake = createFakeHost({
     ...options,
-    env: { HOME: "/h", ...options.env },
+    // 机制用例钉住 v1 引擎：裸调在新语义下落 locale 预设（firered），不再是 sherpa
+    env: { HOME: "/h", SAY_ENGINE: "sherpa", ...options.env },
     files: { [SAY]: "", ...options.files },
   });
   const host: Host = fake.host;

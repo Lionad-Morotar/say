@@ -39,8 +39,12 @@ describe("parseConfigFile：TOML 子集宽容解析", () => {
 });
 
 describe("resolveConfig：flag > env > config > 默认", () => {
-  it("三层全空即零配置默认值，首次运行可出声", () => {
-    expect(resolveConfig({ env: {}, file: null, flags: {} }).config).toEqual(DEFAULTS);
+  it("三层全空即零配置：locale 缺省 en 整套落预设（裸调即三语默认链的 en 行）", () => {
+    expect(resolveConfig({ env: {}, file: null, flags: {} }).config).toEqual({
+      ...DEFAULTS,
+      engine: "firered",
+      voice: "default",
+    });
   });
 
   it("默认语速锚定 macOS say 实测默认 175 wpm", () => {
@@ -156,16 +160,17 @@ describe("resolveConfig：flag > env > config > 默认", () => {
   });
 
   describe("voice=default 关键字：按 locale 落 en/zh 内置预设", () => {
-    it("locale=zh 落 zh 预设（gptsovits + 中文角色嗓 frieren-zh）", () => {
+    it("locale=zh 落 zh 预设（indextts + 中文角色嗓 frieren-zh，261007 试听裁决）", () => {
       const { config, warnings } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
       expect(config.voice).toBe("frieren-zh");
-      expect(config.engine).toBe("gptsovits");
+      expect(config.engine).toBe("indextts");
       expect(warnings).toHaveLength(0);
     });
 
-    it("locale=en 落 en 预设（af_maple）", () => {
+    it("locale=en 落 en 预设（firered 内置示例参考嗓）", () => {
       const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "en" });
-      expect(config.voice).toBe("af_maple");
+      expect(config.voice).toBe("default");
+      expect(config.engine).toBe("firered");
     });
 
     it("locale=ja 落 ja 预设（gptsovits + 芙莉莲日配主参考，261007 ja 进域）", () => {
@@ -176,7 +181,8 @@ describe("resolveConfig：flag > env > config > 默认", () => {
 
     it("locale 未传落缺省 en（编排层未探测时的安全落点）", () => {
       const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" } });
-      expect(config.voice).toBe("af_maple");
+      expect(config.voice).toBe("default");
+      expect(config.engine).toBe("firered");
     });
 
     it("关键字来自 env 或 config 同样解析，显式层压过预设层不变", () => {
@@ -194,9 +200,9 @@ describe("resolveConfig：flag > env > config > 默认", () => {
       expect(config).toMatchObject({ voice: "frieren-zh", engine: "zipvoice" });
     });
 
-    it("config engine 未设时 default 预设的 engine 生效（当前 zh 内置表即 gptsovits）", () => {
+    it("config engine 未设时 default 预设的 engine 生效（当前 zh 内置表即 indextts）", () => {
       const { config } = resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" });
-      expect(config.engine).toBe("gptsovits");
+      expect(config.engine).toBe("indextts");
     });
 
     it("config voice=default 是显式层，压过更低层的预设 voice（config > preset 层序不变）", () => {
@@ -224,8 +230,14 @@ describe("resolveConfig：flag > env > config > 默认", () => {
       expect(resolveConfig({ env: { SAY_VOICE: "dva" }, file: null, flags: {} }).config.voice).toBe("dva");
     });
 
-    it("未设 voice 维持引擎默认嗓语义（null），v1 零配置行为不变", () => {
-      expect(resolveConfig({ env: {}, file: null, flags: {}, locale: "zh" }).config.voice).toBeNull();
+    it("voice 与引擎双双缺席：整套落 locale 预设（261007 裁决的裸调语义）", () => {
+      const { config } = resolveConfig({ env: {}, file: null, flags: {}, locale: "zh" });
+      expect(config).toMatchObject({ voice: "frieren-zh", engine: "indextts" });
+    });
+
+    it("引擎显式在场时 voice 缺席保持 null = 该引擎内置嗓，v1 语义不被 locale 波及", () => {
+      expect(resolveConfig({ env: {}, file: null, flags: { engine: "zipvoice" }, locale: "zh" }).config.voice).toBeNull();
+      expect(resolveConfig({ env: {}, file: null, flags: { engine: "zipvoice" }, locale: "zh" }).config.engine).toBe("zipvoice");
     });
 
     it("needsLocale 门控即解析器：关键字命中且 locale 未传才为 true，覆盖全部层源", () => {
@@ -239,6 +251,10 @@ describe("resolveConfig：flag > env > config > 默认", () => {
           flags: {},
         }).needsLocale,
       ).toBe(true);
+      // 裸调（voice 与引擎双缺席）也是自选形态，需要 locale
+      expect(resolveConfig({ env: {}, file: null, flags: {} }).needsLocale).toBe(true);
+      // 引擎显式在场压掉整套落位，不探测
+      expect(resolveConfig({ env: { SAY_ENGINE: "sherpa" }, file: null, flags: {} }).needsLocale).toBe(false);
       // locale 已传或非关键字一律 false
       expect(resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" }).needsLocale).toBe(false);
       expect(resolveConfig({ env: {}, file: { voice: "frieren" }, flags: {} }).needsLocale).toBe(false);

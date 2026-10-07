@@ -39,7 +39,8 @@ interface InvokeOptions extends FakeHostOptions {
 async function invoke(options: InvokeOptions, argv: readonly string[]) {
   const { synth = okSynth, withModels = true, ...hostOptions } = options;
   const files = { [SAY]: "", ...(withModels ? KOKORO_FILES : {}), ...hostOptions.files };
-  const fake = createFakeHost({ tmpDir: TMP, ...hostOptions, env: { HOME: "/h", ...hostOptions.env }, files });
+  // 钉住 sherpa：注册表只含 sherpa/system，裸调在新语义下落 locale 预设会报「未登记引擎」
+  const fake = createFakeHost({ tmpDir: TMP, ...hostOptions, env: { HOME: "/h", SAY_ENGINE: "sherpa", ...hostOptions.env }, files });
   const code = await run(argv, {
     host: fake.host,
     paths: resolvePaths(fake.host.env),
@@ -144,7 +145,7 @@ describe("fallback = off", () => {
 
 describe("回退本身失败", () => {
   it("系统嗓也不可用时 exit 1，两段原因都在 stderr 里", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, files: {} });
+    const fake = createFakeHost({ tmpDir: TMP, env: { SAY_ENGINE: "sherpa" }, files: {} });
     const code = await run(["hi"], {
       host: fake.host,
       paths: resolvePaths(fake.host.env),
@@ -178,7 +179,7 @@ describe("回退本身失败", () => {
   });
 
   it("注册表里没有系统嗓时按失败退出，回退目标缺失不被静默吞掉", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, files: { [SAY]: "" } });
+    const fake = createFakeHost({ tmpDir: TMP, env: { SAY_ENGINE: "sherpa" }, files: { [SAY]: "" } });
     const code = await run(["hi"], {
       host: fake.host,
       paths: resolvePaths(fake.host.env),

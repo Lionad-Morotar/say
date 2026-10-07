@@ -10,7 +10,7 @@ macOS `say` 的神经网络级替代：同名 CLI，PATH shadow 接管 `say` 调
 git clone <本仓库> && cd say
 pnpm install
 node scripts/install-models.mjs   # v1 基线资产（sherpa/zipvoice），幂等可重跑，约 760MB
-node scripts/install-engine.mjs install gptsovits   # 可选：默认引擎 GPT-SoVITS v2（约 7.0GB，含 NLTK 数据）
+node scripts/install-engine.mjs install indextts   # 可选：三语默认引擎（zh=indextts / en=firered / ja=gptsovits），按需装
 node scripts/link.mjs --dry-run   # 预览接线计划，不落盘
 node scripts/link.mjs             # 接入 ~/.local/bin（全局激活；--bin-dir 可重定向）
 say "hello, this is the new voice"
@@ -28,12 +28,12 @@ say "hello, this is the new voice"
 
 ```sh
 say engine ls                        # 七引擎清单（wired = 注册表就绪）
-say engine use gptsovits             # 写 config 默认引擎（持久）
+say engine use indextts              # 写 config 默认引擎（持久，覆盖 locale 按语落位）
 say --engine voxcpm "流式引擎试一句"   # 逐次指定，不改 config
-SAY_ENGINE=indextts say "节奏引擎"     # 会话级指定
+SAY_ENGINE=firered say "english take"  # 会话级指定
 ```
 
-默认预设按 locale 每次调用现场解析：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。要固化引擎与嗓音，用 `say engine use` 写 config。
+默认预设按 locale 每次调用现场解析：AppleLanguages 优先、LANG 兜底、缺省 en。`voice = "default"` 关键字按 locale 落内置预设；`frieren` / `dva` 角色名直接作 voice 使用（引擎支持克隆时认领）。三语默认由 261007 试听裁决定档：**zh → indextts + frieren-zh · en → firered（内置女声）· ja → gptsovits + frieren**。要固化引擎与嗓音，用 `say engine use` 写 config。
 
 ## 调用面
 
@@ -49,15 +49,15 @@ SAY_ENGINE=indextts say "节奏引擎"     # 会话级指定
 `~/.config/say/config.toml`（XDG）：
 
 ```toml
-engine = "gptsovits"     # sherpa | zipvoice | gptsovits | voxcpm | indextts | firered | system
+# engine = "indextts"   # 显式固化则压过 locale 按语落位；不写即走三语默认
 voice = "default"        # default 按 locale 落预设；frieren / dva 角色名；引擎内登记音色名
 speed = 175              # wpm，macOS say 同单位
 fallback = "system"      # "off" 关闭回退
 preset = "zh"            # 启动预设（locale 自动默认，一般无需手写）
 
-[presets.en]             # 内置：en 链（sherpa + kokoro af_maple）/ zh 链（gptsovits + frieren-zh 角色嗓）
-voice = "af_maple"
-engine = "sherpa"
+[presets.en]             # 内置：en 链（firered 内置女声参考）/ zh 链（indextts + frieren-zh）/ ja 链（gptsovits + frieren）
+voice = "default"
+engine = "firered"
 ```
 
 环境变量：`SAY_ENGINE` / `SAY_VOICE` / `SAY_SPEED` / `SAY_PRESET` / `SAY_FALLBACK` / `SAY_DEBUG=1`（一行时序摘要到 stderr）。
@@ -66,11 +66,11 @@ engine = "sherpa"
 
 | 引擎 | 资产 | 音色 | 说明 |
 | --- | --- | --- | --- |
-| gptsovits（默认） | GPT-SoVITS v2 pretrained（~7.0GB） | default 预设 + 角色 ref 资产 | 中英热延迟双 PASS（1.3-2.8s），角色克隆零改造映射，微调升级路 |
-| voxcpm | VoxCPM2（~4.6GB） | default + 角色 ref | 质量上限选项：generate_streaming 首包 0.2-0.5s，voice creation 指令前缀 |
-| indextts | IndexTTS 2.5（~10GB） | default（voice_01）+ 角色 ref | duration_factor 语速近线性（-r 映射），emo_alpha 情感面预留 |
-| firered | FireRedTTS3（~20.8GB） | default（prompt_2）+ 角色 ref | 指令控制面最全（语速/pitch/volume），24 语言；上游 CUDA 硬编码已 patch |
-| sherpa | kokoro fp32 + matcha-zh | 103 嗓内嵌表（`-v ?`） | v1 基线：英文 af_maple 系、中文 zh_baker 最快 |
+| gptsovits（ja 默认） | GPT-SoVITS v2 pretrained（~7.0GB） | default 预设 + 角色 ref 资产 | 中英热延迟双 PASS（1.3-2.8s），角色克隆零改造映射，微调升级路；zh/en 默认已由试听改判 |
+| voxcpm | VoxCPM2（~4.6GB） | default + 角色 ref | 质量上限选项：generate_streaming 首包 0.2-0.5s，voice creation 指令前缀；参考 >10s 零样本失稳 |
+| indextts（zh 默认） | IndexTTS 2.5（~10GB） | default（voice_01 男声）+ 角色 ref | 中文听感四引擎试听最优；duration_factor 语速近线性（-r 映射），emo_alpha 情感面预留 |
+| firered（en 默认） | FireRedTTS3（~39G 实测） | default（prompt_2 女声）+ 角色 ref | 英文听感试听最优；指令控制面（语速/pitch/volume）一期未接线，24 语言；上游 CUDA 硬编码已 patch |
+| sherpa | kokoro fp32 + matcha-zh | 103 嗓内嵌表（`-v ?`） | v1 基线 + locale miss 兜底：英文 af_maple 系、中文 zh_baker 最快、zm_* 男声×45 |
 | zipvoice | zipvoice-distill-int8 | 角色目录注册表 | v1 克隆基线：零样本，参考音频即嗓音 |
 | system | 无 | 系统 say 音色 | 回退后端与透传目标 |
 
@@ -80,7 +80,7 @@ engine = "sherpa"
 
 在 `~/.local/share/say/voices/<角色名>/` 放三件套即可，无需改代码：
 
-- `ref.wav`：10-30s 单声道 24kHz 干音（越短每调用越快）
+- `ref.wav`：3-10s 单声道 24kHz 干音（GPT-SoVITS 官方硬限，VoxCPM 实证同样成立——>10s 长参考零样本失稳，塌男声或无浊音）
 - `ref.txt`：参考音频的逐字转写
 - `meta.json`：来源/语言/许可注记
 

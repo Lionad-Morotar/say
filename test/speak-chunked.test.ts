@@ -108,7 +108,8 @@ async function invoke(options: InvokeOptions, argv: readonly string[]) {
     ...hostOptions,
     // exactOptionalPropertyTypes 下不能把可能为 undefined 的字段直接塞进去
     ...(tick === undefined && advance === undefined ? {} : { now: tick ?? (() => virtual) }),
-    env: { HOME: "/h", ...options.env },
+    // 钉住 sherpa：裸调在 v2 新语义下落 locale 预设引擎，分块机制用例与引擎自选无关
+    env: { HOME: "/h", SAY_ENGINE: "sherpa", ...options.env },
   });
   const innerSpawn = fake.host.spawn;
   fake.host.spawn = async (cmd: string, args: readonly string[], spawnOpts?: SpawnOpts) => {
@@ -252,7 +253,7 @@ describe("长文本分块：中途失败的收尾", () => {
   });
 
   it("已经出过声且回退也不可用时仍是 exit 0，原因留在 stderr", async () => {
-    const fake = createFakeHost({ tmpDir: TMP, env: { HOME: "/h" }, files: KOKORO_FILES });
+    const fake = createFakeHost({ tmpDir: TMP, env: { HOME: "/h", SAY_ENGINE: "sherpa" }, files: KOKORO_FILES });
     let index = 0;
     const synth: SherpaSynth = async () => {
       index += 1;

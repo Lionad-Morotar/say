@@ -41,7 +41,7 @@ const hf = (repo, file) => ({ net: "hf-mirror", url: `https://hf-mirror.com/${re
  * @property {{strip:number,delete?:boolean}} [archive] zip/tar.gz 包：解压 strip 层后落位，delete = 解压后删包
  */
 
-/** GPT-SoVITS v2：默认引擎（蓝图裁决 1），CPU 档；底模 zip 一把梭 + G2PW onnx 导出件单独包 */
+/** GPT-SoVITS v2：ja 默认引擎（中文默认已由试听改判 indextts），CPU 档；底模 zip 一把梭 + G2PW onnx 导出件单独包 */
 const GPTSOVITS = {
   id: "gptsovits",
   repo: "https://github.com/RVC-Boss/GPT-SoVITS",
