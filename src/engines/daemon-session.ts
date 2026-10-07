@@ -4,6 +4,7 @@ import { readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import net from "node:net";
 import type { DaemonProcess } from "../host.ts";
+import { isCircuitOpen, recordCircuitFailure, type CircuitHandle } from "./daemon-circuit.ts";
 
 /**
  * 常驻 daemon 的 Node 侧会话面（热启动 S1，gptsovits 钉版先行）：
@@ -107,6 +108,12 @@ export interface DaemonSessionOptions {
   requestTimeoutMs?: number;
   /** lazy 轮询可连的间隔 */
   pollIntervalMs?: number;
+  /**
+   * 故障熔断句柄（daemon-failures 文件）：markUnavailable 是所有基础设施失败的收敛咽喉，
+   * 计数在此计入；off 与冷却直拒不走 markUnavailable 故不计数（容量事件与跳过不是劣化证据）。
+   * 缺席则纯内存 sticky，跨进程闸由上层装配决定开不开。
+   */
+  circuit?: CircuitHandle;
 }
 
 /** 四个计时旋钮的落定形态：缺省值集中一处，注入值供测试收窗 */
@@ -172,6 +179,11 @@ export class DaemonSession {
       throw new DaemonUnavailableError(`${this.opts.label} 常驻形态本次调用不再尝试：${this.unavailable}`);
     }
     if (this.socket !== null && !this.socket.destroyed && !this.streamEnded) return;
+    // 冷却闸只拦「新建立」：已有活连接照常复用（开窗后在途请求该出多少声出多少声）。
+    // 直拒不走 markUnavailable：冷却跳过不是新的劣化证据，也不该污染 sticky
+    if (this.opts.circuit !== undefined && isCircuitOpen(this.opts.circuit)) {
+      throw new DaemonUnavailableError(`${this.opts.label} 常驻形态熔断冷却中（近期连续失败），本次直接走 per-call`);
+    }
     if (this.establishing !== null) {
       await this.establishing;
       return;
@@ -265,6 +277,9 @@ export class DaemonSession {
 
   private markUnavailable(reason: string): void {
     this.unavailable = reason;
+    // 熔断计数的唯一咽喉：establish/spawnAndWait/request 所有基础设施失败都收敛到这里，
+    // 拉起失败、握手不符、在途 EOF、请求超时 kill 天然全覆盖（票 04 计数事件集合）
+    if (this.opts.circuit !== undefined) recordCircuitFailure(this.opts.circuit);
     this.detachSocket();
   }
 

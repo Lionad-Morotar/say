@@ -256,3 +256,17 @@ export function resolveConfig(input: {
 
   return { config, warnings, needsLocale };
 }
+
+/**
+ * SAY_DAEMON 逃生门（票 04 形态共存的环境层开关）：off = 常驻形态整体禁用，
+ * 请求直接进 per-call——与 daemon 上线前的行为同形；on/缺席/空串 = daemon-first 缺省。
+ * 其它值按 on 处理 + 警告：与环境层坏值降级的既有哲学一致（可用性下限是永远能出声，
+ * 一个 typo 不该砍掉热启动收益、更不该瘫痪命令）。[daemon] 配置节与 flag>env>config
+ * 三层完整优先级是后续切片（蓝图「SAY_DAEMON 解析先行」口径），此处只钉 env 面。
+ */
+export function daemonEnabledFromEnv(env: EnvMap): { enabled: boolean; warning: string | null } {
+  const raw = env.SAY_DAEMON;
+  if (raw === undefined || raw === "" || raw === "on") return { enabled: true, warning: null };
+  if (raw === "off") return { enabled: false, warning: null };
+  return { enabled: true, warning: `SAY_DAEMON 只能是 "on" 或 "off"，按 on 处理：${JSON.stringify(raw)}` };
+}

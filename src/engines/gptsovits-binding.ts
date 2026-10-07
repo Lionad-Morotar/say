@@ -3,6 +3,7 @@ import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
 import { DaemonSession, DaemonUnavailableError, GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 
 /** say-lab 引擎安装面（路径判据与 scripts/lib/engine-status.mjs 同构） */
 export interface GptsovitsLabSpec {
@@ -143,10 +144,13 @@ export interface GptsovitsDaemonTuning {
  *   且 per-call 形态报出的原因与 daemon 相同，重放只白付一次冷启动）。
  */
 export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning: GptsovitsDaemonTuning = {}): GptsovitsSynth {
+  // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
+  const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
+    circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
     spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
     expectedVersionKey: () => ({
@@ -183,7 +187,12 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
       if (msg.type === "audio" && msg.id === id) {
         chunks.push(decodePcm(msg.pcm));
         sampleRate = msg.sampleRate;
-        if (msg.done) return { samples: concatSamples(chunks), sampleRate };
+        if (msg.done) {
+          // 一次成功的温态合成 = daemon 健康的最强证据：劣化史清零（票 04 熔断回收判据）。
+          // 只在 done 终结帧清：半截流/引擎级 error 都不算 daemon 恢复了
+          clearCircuitFailures(circuit);
+          return { samples: concatSamples(chunks), sampleRate };
+        }
       }
     }
     // EOF/超时由 request 传输层抛 DaemonUnavailableError；走到这里是 done 前流自然终结的异常形态
