@@ -50,6 +50,8 @@ export function startFakeDaemon(sockPath: string, spec: FakeDaemonSpec = {}): Pr
     connects += 1;
     sockets.push(conn);
     conn.setNoDelay(true);
+    // 对端随时可能离场（如 bind 探针连上即退）：写死连接的 EPIPE 吞掉，与真 daemon send_frame 的容错同语义
+    conn.on("error", () => undefined);
     if (spec.writeChunks !== undefined) {
       // 分块写：逐块回调拉开间隔，loopback 不合并、退化为独立 chunk
       let i = 0;
