@@ -77,12 +77,13 @@ export function weightsFingerprint(labDir: string, markers: readonly string[]): 
 /** 握手等待的帧型结局：行 / 流终止 / 超时（timeout 与 eof 都进 kill 重拉判定面） */
 type FrameOutcome = { kind: "line"; line: string } | { kind: "eof" } | { kind: "timeout" };
 
-/** 握手收妥的 ready 三元组 + 诊断面 device */
+/** 握手收妥的 ready 三元组 + 诊断面 device + daemon 自述 pid（kill 归属核对用，旧 daemon 无此字段） */
 interface ReadyInfo {
   protocol: string;
   engineVersion: string;
   weightsFingerprint: string;
   device: string;
+  pid: number | null;
 }
 
 export interface DaemonSessionOptions {
@@ -143,6 +144,8 @@ export class DaemonSession {
   /** 当前连接是否由本会话 spawn 而来：kill 优先用自带句柄，外部 daemon 走 pid 文件 */
   private socketFromSpawn = false;
   private spawnedProc: DaemonProcess | null = null;
+  /** 握手期 daemon ready 帧自述的 pid：kill 前与 pid 文件核对，不符即拒 kill（防 pid 复用误杀无辜进程） */
+  private peerPid: number | null = null;
   /** 单消费者行队列：Buffer 累积按 0x0a 切（逐 chunk toString 会切断多字节 UTF-8） */
   private lineBuffer: Buffer = Buffer.alloc(0);
   private readonly lineQueue: string[] = [];
@@ -224,19 +227,37 @@ export class DaemonSession {
   /**
    * kill daemon：spawn 句柄优先（自己拉的自己收），否则 pid 文件（外部 daemon）；
    * kill 后 unlink sock/pid：过期进程的残file挡路重拉（多 CLI 并发拉起的竞态仲裁另行完善）。
+   * 外部 pid 场景的归属核对：ready 自述 pid 与 pid 文件不符即拒 kill 拒 unlink——pid 文件可能
+   * 指向被复用的无辜进程、sock 可能是另一活 daemon 的注册点，不确定就不动 destructive 面。
    */
-  async killDaemon(): Promise<void> {
-    const pid = this.socketFromSpawn ? (this.spawnedProc?.pid ?? null) : await this.readPidFile();
-    if (pid !== null) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // 进程已死：kill 失败无意义，残file清理由下面兜住
+  async killDaemon(): Promise<"killed" | "skipped"> {
+    if (this.socketFromSpawn) {
+      const pid = this.spawnedProc?.pid ?? null;
+      if (pid !== null) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // 进程已死：kill 失败无意义，残file清理由下面兜住
+        }
+      }
+    } else {
+      const pidFile = await this.readPidFile();
+      if (this.peerPid !== null && pidFile !== null && this.peerPid !== pidFile) {
+        this.detachSocket();
+        return "skipped";
+      }
+      if (pidFile !== null) {
+        try {
+          process.kill(pidFile, "SIGKILL");
+        } catch {
+          // 同上
+        }
       }
     }
     await unlinkQuiet(this.opts.socketPath);
     await unlinkQuiet(this.opts.pidPath);
     this.detachSocket();
+    return "killed";
   }
 
   private markUnavailable(reason: string): void {
@@ -257,6 +278,9 @@ export class DaemonSession {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let socket: net.Socket | "need-spawn";
       let spawnedNow = false;
+      // 轮内共享预算：可连轮询与 ready 握手合计不超 readyTimeoutMs（两段各自满额会让
+      // bind 即成但 ready 永不到场的僵死 daemon 静默挂近 2×120s，远超文档口径）
+      const roundStart = Date.now();
       const connect = await this.tryConnect();
       if (connect === "refused") {
         await unlinkQuiet(this.opts.socketPath); // 残file无人监听：挡 bind 也挡复用，清掉转拉起
@@ -271,14 +295,17 @@ export class DaemonSession {
         spawnedNow = true;
         lastReason = "握手未通过";
       }
-      const outcome = await this.handshake(socket, spawnedNow ? this.opts.readyTimeoutMs : this.opts.warmTimeoutMs);
+      const handshakeBudget = spawnedNow ? Math.max(1, this.opts.readyTimeoutMs - (Date.now() - roundStart)) : this.opts.warmTimeoutMs;
+      const outcome = await this.handshake(socket, handshakeBudget);
       if (outcome.kind === "ready") {
         const expected = this.opts.expectedVersionKey();
         const got = outcome.info;
         if (got.protocol === expected.protocol && got.engineVersion === expected.engineVersion && got.weightsFingerprint === expected.weightsFingerprint) {
-          this.settleSocket(socket, spawnedNow);
+          this.settleSocket(socket, spawnedNow, got.pid);
           return;
         }
+        // 不符也要记下对端自述 pid：kill 归属核对对「拒收的 ready」同样适用
+        this.peerPid = got.pid;
         lastReason = `版本键不符（daemon: protocol=${got.protocol} version=${got.engineVersion} weights=${got.weightsFingerprint.slice(0, 12)}… / 期望 protocol=${expected.protocol} version=${expected.engineVersion} weights=${expected.weightsFingerprint.slice(0, 12)}…）`;
       } else if (outcome.kind === "fatal") {
         // 确定性加载失败：再拉只是再付一次冷启动，直接把原因交降级链（per-call 会报出同一 fatal）
@@ -289,10 +316,14 @@ export class DaemonSession {
         lastReason = outcome.kind === "timeout" ? `ready 等待超时（>${Math.round((spawnedNow ? this.opts.readyTimeoutMs : this.opts.warmTimeoutMs) / 1000)}s）` : "握手期连接已终止（EOF）";
       }
       // 僵死/过期形态：kill + unlink 后重拉一次（第二轮仍如此即封顶）。
-      // kill 归属现场钉定：本轮连接来自 spawn 就用自带句柄，外部 daemon 走 pid 文件
+      // kill 归属现场钉定：本轮连接来自 spawn 就用自带句柄，外部 daemon 走 pid 文件；
+      // pid 归属核对不过（skipped）即封顶——重拉会撞同一堵墙，空转只会拉长静默
       this.socket = socket;
       this.socketFromSpawn = spawnedNow;
-      await this.killDaemon();
+      if ((await this.killDaemon()) === "skipped") {
+        lastReason = "daemon 自述 pid 与 pid 文件不符（pid 复用或双 daemon 并存），拒 kill 拒清其文件";
+        break;
+      }
     }
     this.markUnavailable(lastReason);
     throw new DaemonUnavailableError(`${this.opts.label} 常驻形态不可用：${lastReason}`);
@@ -349,17 +380,19 @@ export class DaemonSession {
       const msg = raw as Record<string, unknown>;
       if (msg.type === "fatal" && typeof msg.message === "string") return { kind: "fatal", message: msg.message };
       if (msg.type !== "ready") continue;
+      const pid = typeof msg.pid === "number" ? msg.pid : null;
       if (typeof msg.protocol !== "string" || typeof msg.version !== "string" || typeof msg.weights_fingerprint !== "string") {
         // ready 缺版本键字段 = 握手前的旧 shim 形态 daemon：判过期（不符语义走调用方比较前直接报）
-        return { kind: "ready", info: { protocol: String(msg.protocol ?? ""), engineVersion: String(msg.version ?? ""), weightsFingerprint: String(msg.weights_fingerprint ?? ""), device: String(msg.device ?? "") } };
+        return { kind: "ready", info: { protocol: String(msg.protocol ?? ""), engineVersion: String(msg.version ?? ""), weightsFingerprint: String(msg.weights_fingerprint ?? ""), device: String(msg.device ?? ""), pid } };
       }
-      return { kind: "ready", info: { protocol: msg.protocol, engineVersion: msg.version, weightsFingerprint: msg.weights_fingerprint, device: msg.device === undefined ? "" : String(msg.device) } };
+      return { kind: "ready", info: { protocol: msg.protocol, engineVersion: msg.version, weightsFingerprint: msg.weights_fingerprint, device: msg.device === undefined ? "" : String(msg.device), pid } };
     }
   }
 
-  private settleSocket(socket: net.Socket, fromSpawn: boolean): void {
+  private settleSocket(socket: net.Socket, fromSpawn: boolean, peerPid: number | null): void {
     this.socket = socket;
     this.socketFromSpawn = fromSpawn;
+    this.peerPid = peerPid;
     socket.unref(); // 握手完成即归还事件循环：request 期再 ref
   }
 
@@ -384,6 +417,7 @@ export class DaemonSession {
     this.lineBuffer = Buffer.alloc(0);
     this.lineQueue.length = 0;
     this.streamEnded = false;
+    this.peerPid = null; // 归属自述只对当前连接有效，换连接即失效
     const gen = ++this.generation;
     const mine = () => this.generation === gen; // 旧 socket 的迟发事件直接弃听
     socket.on("data", (chunk: Buffer) => {

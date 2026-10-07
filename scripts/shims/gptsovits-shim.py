@@ -270,6 +270,8 @@ def serve_daemon(args) -> int:
                 "device": str(config.device),
                 "protocol": PROTOCOL_VERSION,
                 "weights_fingerprint": weights_fingerprint(lab),
+                # kill 归属核对：Node 侧对 pid 文件动手前比对本自述，防 pid 复用误杀无辜进程
+                "pid": os.getpid(),
             }
             loaded.set()
             broadcast(engine_info["ready"])

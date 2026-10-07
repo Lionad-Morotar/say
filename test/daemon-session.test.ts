@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
@@ -36,15 +36,15 @@ function fakeProc(): DaemonProcess & { settle(code: number | null, signal: strin
   };
 }
 
-/** 真实短命 dummy：pid 文件写它的号，kill 链路断言收到 SIGKILL */
-async function makeLiveDummy(pidPath: string): Promise<{ expectKilled(): Promise<string | null> }> {
+/** 真实短命 dummy：pid 文件写它的号，kill 链路断言收到 SIGKILL；kill() 供未杀场景收尾防孤儿 */
+async function makeLiveDummy(pidPath: string): Promise<{ pid: number; kill(): void; expectKilled(): Promise<string | null> }> {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   child.unref();
   await sleep(50);
   if (child.exitCode !== null) throw new Error("dummy 子进程秒退，测试前提不成立");
   writeFileSync(pidPath, `${child.pid}\n`);
   const signal = new Promise<string | null>((resolve) => child.once("exit", (_code, sig) => resolve(sig)));
-  return { expectKilled: () => signal };
+  return { pid: child.pid!, kill: () => child.kill("SIGKILL"), expectKilled: () => signal };
 }
 
 class Harness {
@@ -209,6 +209,41 @@ describe("DaemonSession.ensure：warm 直连与 handshake", () => {
     try {
       const dummy = await makeLiveDummy(h.pidPath);
       h.track(await startFakeDaemon(h.sockPath, { ready: "none" }));
+      h.spawnHooks.push(() => {
+        void startFakeDaemon(h.sockPath).then((d) => h.track(d));
+      });
+      await h.session.ensure();
+      expect(await dummy.expectKilled()).toBe("SIGKILL");
+      expect(h.spawns).toHaveLength(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("ready 自述 pid 与 pid 文件不符：拒 kill 拒清文件直接 unavailable（pid 复用误杀防线）", async () => {
+    const h = new Harness();
+    try {
+      const dummy = await makeLiveDummy(h.pidPath);
+      try {
+        h.track(await startFakeDaemon(h.sockPath, { ready: readyFrame({ protocol: "1", pid: dummy.pid + 1 }) }));
+        await expect(h.session.ensure()).rejects.toBeInstanceOf(DaemonUnavailableError);
+        expect(h.spawns).toHaveLength(0); // 归属不符即封顶，不空转重拉
+        const outcome = await Promise.race([dummy.expectKilled(), sleep(300).then(() => "still-alive" as const)]);
+        expect(outcome).toBe("still-alive"); // 无辜 pid 没被动过
+        expect(existsSync(h.sockPath)).toBe(true); // 活 daemon 的注册点不碰
+      } finally {
+        dummy.kill();
+      }
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("ready 自述 pid 与 pid 文件一致：版本不符照 kill 照重拉（新 daemon 正常归属链路）", async () => {
+    const h = new Harness();
+    try {
+      const dummy = await makeLiveDummy(h.pidPath);
+      h.track(await startFakeDaemon(h.sockPath, { ready: readyFrame({ version: "v9", pid: dummy.pid }) }));
       h.spawnHooks.push(() => {
         void startFakeDaemon(h.sockPath).then((d) => h.track(d));
       });

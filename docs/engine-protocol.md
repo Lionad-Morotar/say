@@ -80,6 +80,7 @@ daemon 常驻形态的 ready 额外携带**握手版本键**（per-call 形态�
 |---|---|
 | `protocol` | 协议版本常量，与 Node 侧同仓同步 bump；漂移只发生在「旧代码拉起的旧 daemon」场景 |
 | `weights_fingerprint` | 权重面磁盘投影：安装 marker 清单（`.install-ok` 的 `rel\|size\|mtime_ms` 升序 join）的 sha256，TS 与 Python 双实现由对拍测试钉死；升级重装 marker 变 → 指纹变 → 旧 daemon 握手自动失效 |
+| `pid` | daemon 自述 pid：Node 侧对 pid 文件执行 kill 前与本字段核对，不符即拒 kill 拒清文件（pid 文件可能指向被复用的无辜进程）；旧 shim 无此字段，缺席时不校验、维持原 kill 语义 |
 
 任一不符 = 过期常驻进程（跑的是旧代码或旧权重），Node 侧判 SIGKILL + unlink sock + 重拉一次封顶；不做热切权重——进程内存混两套状态产错音无从归因。
 
