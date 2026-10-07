@@ -1,119 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import net from "node:net";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DaemonSession, DaemonUnavailableError, type DaemonSessionOptions } from "../src/engines/daemon-session.ts";
 import type { DaemonProcess } from "../src/host.ts";
+import { readyFrame, startFakeDaemon, type FakeDaemon } from "./daemon-fakes.ts";
 
 /**
- * daemon-session 的 fake 矩阵：测试内的假 daemon 是**进程内真 unix socket 服务端**（net.createServer），
- * 帧协议、分块边界、EOF 时序都走真 socket 传输——fake-host 的管道替身对 EOF/exit
- * 空窗与断连时序结构性失明，传输面只能实测。
- * kill 断言用真实短命子进程收 SIGKILL，验证 pid 文件链路；spawn 编排用可编程假 DaemonProcess。
+ * daemon-session 的 fake 矩阵（共享替身见 daemon-fakes.ts）：假 daemon 是进程内真 unix socket
+ * 服务端，传输面实测。kill 断言用真实短命子进程收 SIGKILL，验证 pid 文件链路；
+ * spawn 编排用可编程假 DaemonProcess。
  */
 
+/** 与 readyFrame 缺省输出对齐的期望版本键（会话握手的对照面） */
 const VALID_KEY = { protocol: "2", engineVersion: "v2", weightsFingerprint: "fp-current" };
 
-function readyFrame(over: Record<string, unknown> = {}): string {
-  return `${JSON.stringify({
-    type: "ready",
-    engine: "gptsovits",
-    version: "v2",
-    device: "cpu",
-    protocol: "2",
-    weights_fingerprint: "fp-current",
-    ...over,
-  })}\n`;
-}
-
 const REQUEST_LINE = '{"type":"synthesize","id":1,"text":"你好"}\n';
-
-/** 假 daemon 服务端：每个连接建立即写 ready（可注入杂散行前置/坏版本键/hang 形态/请求后断连） */
-interface FakeDaemonSpec {
-  ready?: string | "none";
-  beforeReady?: string[];
-  /** 收到请求行后的行为：缺省回 audio done；"close" 立即断连（在途 EOF）；"ignore" 挂死（hang） */
-  onLine?: "audio" | "close" | "ignore";
-  /** 按给定字节块序写帧（模拟 TCP 分包在 UTF-8 多字节中间切断） */
-  writeChunks?: Buffer[];
-}
-
-interface FakeDaemon {
-  connects: number;
-  requests: string[];
-  close(): Promise<void>;
-}
-
-function startFakeDaemon(sockPath: string, spec: FakeDaemonSpec = {}): Promise<FakeDaemon> {
-  const sockets: net.Socket[] = [];
-  const requests: string[] = [];
-  let connects = 0;
-  try {
-    unlinkSync(sockPath);
-  } catch {
-    /* 残file不存在属正常 */
-  }
-  const server = net.createServer((conn) => {
-    connects += 1;
-    sockets.push(conn);
-    conn.setNoDelay(true);
-    if (spec.writeChunks !== undefined) {
-      // 分块写：逐块回调拉开间隔，loopback 不合并、退化为独立 chunk
-      let i = 0;
-      const step = () => {
-        if (i < spec.writeChunks!.length) conn.write(spec.writeChunks![i++]!, step);
-      };
-      step();
-    } else {
-      for (const noise of spec.beforeReady ?? []) conn.write(noise);
-      if (spec.ready !== "none") conn.write(spec.ready ?? readyFrame());
-    }
-    let buffer = "";
-    conn.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      let cut = buffer.indexOf("\n");
-      while (cut >= 0) {
-        const line = buffer.slice(0, cut);
-        buffer = buffer.slice(cut + 1);
-        if (line.length > 0) {
-          requests.push(line);
-          if (spec.onLine === "close") {
-            conn.end(); // 请求刚收到就掐连接：在途 EOF 形态
-            return;
-          }
-          if (spec.onLine !== "ignore") {
-            const id = (JSON.parse(line) as { id: number }).id;
-            const pcm = Buffer.alloc(4);
-            pcm.writeInt16LE(16384, 0);
-            pcm.writeInt16LE(-16384, 2);
-            conn.write(`${JSON.stringify({ type: "audio", id, pcm: pcm.toString("base64"), sample_rate: 32000, done: true })}\n`);
-          }
-        }
-        cut = buffer.indexOf("\n");
-      }
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.listen(sockPath, () =>
-      resolve({
-        get connects() {
-          return connects;
-        },
-        requests,
-        close: () =>
-          new Promise<void>((res) => {
-            for (const s of sockets) s.destroy();
-            server.close(() => res());
-          }),
-      }),
-    );
-    server.on("error", reject);
-  });
-}
 
 /** 可编程假 DaemonProcess：exit 由测试驱动；pid 指向不存在进程，kill 路径 ESRCH 应被吞 */
 function fakeProc(): DaemonProcess & { settle(code: number | null, signal: string | null): void } {
