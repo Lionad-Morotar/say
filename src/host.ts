@@ -64,6 +64,8 @@ export interface Host {
   /** 目录直下条目名（仅目录），失败或不存在返回空：角色音色注册表的枚举通道 */
   listDirEntries(path: string): readonly string[];
   readFileText(path: string): Promise<string>;
+  /** 二进制读：参考音频窗口规整等字节级检查用；文本面请走 readFileText */
+  readFileBytes(path: string): Promise<Uint8Array>;
   readStdin(): Promise<string>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
   removeFile(path: string): Promise<void>;
@@ -172,6 +174,7 @@ export function createNodeHost(env: EnvMap = process.env): Host {
       }
     },
     readFileText: (p) => readFile(p, "utf8"),
+    readFileBytes: async (p) => new Uint8Array(await readFile(p)),
     readStdin: async () => {
       const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) chunks.push(chunk as Buffer);

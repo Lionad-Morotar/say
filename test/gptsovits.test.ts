@@ -6,6 +6,8 @@ import {
   gptsovitsMissingAssets,
   detectTextLang,
   resolveLabPython,
+  truncateWav,
+  wavView,
 } from "../src/engines/gptsovits.ts";
 import { createShimSynth, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
 import type { ZipvoiceSynth } from "../src/engines/zipvoice-binding.ts";
@@ -30,7 +32,7 @@ const FRIEREN_META = JSON.stringify({
 });
 
 /** 安装面五件套（venv + 内核 + 两份解压资产 + open_jtalk 字典的 .install-ok）在盘的基线环境 */
-function makeFiles(extra: Record<string, string> = {}): Record<string, string> {
+function makeFiles(extra: Record<string, string | Uint8Array> = {}): Record<string, string | Uint8Array> {
   return {
     [`${LAB}/venv/bin/python`]: "",
     [`${REPO}/GPT_SoVITS/TTS_infer_pack/TTS.py`]: "",
@@ -70,9 +72,59 @@ const speakOpts = (over: Partial<SpeakOptions> = {}): SpeakOptions => ({
   ...over,
 });
 
+/** 标准 PCM wav 字节构造（单 fmt + data 块）：截断用例与 fake files 表共用 */
+function pcmWav(seconds: number, sampleRate = 24000, channels = 1, bits = 16): Uint8Array {
+  const blockAlign = (channels * bits) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = Math.round(byteRate * seconds);
+  const header = new ArrayBuffer(44);
+  const dv = new DataView(header);
+  const tag = (at: number, value: string) => new TextEncoder().encodeInto(value, new Uint8Array(header, at, 4));
+  tag(0, "RIFF");
+  dv.setUint32(4, 36 + dataSize, true);
+  tag(8, "WAVE");
+  tag(12, "fmt ");
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);
+  dv.setUint16(22, channels, true);
+  dv.setUint32(24, sampleRate, true);
+  dv.setUint32(28, byteRate, true);
+  dv.setUint16(32, blockAlign, true);
+  dv.setUint16(34, bits, true);
+  tag(36, "data");
+  dv.setUint32(40, dataSize, true);
+  const out = new Uint8Array(44 + dataSize);
+  out.set(new Uint8Array(header), 0);
+  return out;
+}
+
+describe("参考音频窗口规整（GPT-SoVITS 硬拒 3-10s 外的参考）", () => {
+  it("wavView 解析 byteRate/blockAlign/data 块", () => {
+    const view = wavView(pcmWav(20.8));
+    expect(view).toEqual({ byteRate: 48000, blockAlign: 2, dataOffset: 44, dataSize: 998400 });
+  });
+
+  it("非 wav 与截断头文件返回 null（格式错误留给 shim 报精确错）", () => {
+    expect(wavView(new TextEncoder().encode("not a wav file at all"))).toBeNull();
+    expect(wavView(new Uint8Array(10))).toBeNull();
+  });
+
+  it("truncateWav 截前缀、帧对齐、两处 size 改写一致", () => {
+    const bytes = pcmWav(20.8);
+    const view = wavView(bytes)!;
+    const out = truncateWav(bytes, view, 9.5);
+    const outView = wavView(out)!;
+    expect(outView.dataSize / outView.byteRate).toBeCloseTo(9.5, 1);
+    expect(outView.dataSize % outView.blockAlign).toBe(0);
+    expect(outView.byteRate).toBe(view.byteRate);
+    // RIFF size = 总长 - 8，与 data size 自洽
+    expect(new DataView(out.buffer).getUint32(4, true)).toBe(out.length - 8);
+  });
+});
+
 function makeEngine(
   synth: (req: GptsovitsSynthRequest) => Promise<{ samples: Float32Array; sampleRate: number }>,
-  files: Record<string, string> = makeFiles(),
+  files: Record<string, string | Uint8Array> = makeFiles(),
 ): { engine: EngineAdapter; fake: ReturnType<typeof createFakeHost> } {
   const fake = createFakeHost({ env: { HOME: "/h" }, files });
   const engine = createGptsovitsEngine({
@@ -109,7 +161,7 @@ describe("gptsovits 安装面判据", () => {
   });
 
   it("resolveLabPython 认三形态 venv（与 engine-status 同构），spawn 与判据共用同一真源", () => {
-    const expectPython = (files: Record<string, string>): string => resolveLabPython(LAB, createFakeHost({ env: { HOME: "/h" }, files }).host);
+    const expectPython = (files: Record<string, string | Uint8Array>): string => resolveLabPython(LAB, createFakeHost({ env: { HOME: "/h" }, files }).host);
     expect(expectPython(makeFiles())).toBe(`${LAB}/venv/bin/python`);
     // uv sync 落点形态
     const dotVenv = makeFiles();
@@ -232,6 +284,37 @@ describe("gptsovits.speak（注入假合成器）", () => {
   it("未登记的角色名报精确原因（点 voicesDir）", async () => {
     const { engine } = makeEngine(fakeSynth().synth);
     await expect(engine.speak("hi", speakOpts({ voice: "nosuch" }))).rejects.toThrow(/nosuch/);
+  });
+
+  it("超窗角色参考截前缀到 tmp：synth 收到规整路径，产物按嗓名落 tmp（frieren-zh 20.8s 实测被引擎硬拒的回归锚）", async () => {
+    const long = pcmWav(20.8);
+    const { synth, calls } = fakeSynth();
+    const { engine, fake } = makeEngine(synth, makeFiles({ [`${VOICES}/frieren/ref-zh.wav`]: long, [`${VOICES}/frieren/ref-zh.txt`]: "芙莉莲中文转写\n" }));
+    await engine.speak("你好", speakOpts({ voice: "frieren-zh" }));
+    const expected = `/tmp/gptsovits-ref-frieren-zh.wav`;
+    expect(calls[0]!.refAudioPath).toBe(expected);
+    const write = fake.writes.find((w) => w.path === expected);
+    expect(write).toBeDefined();
+    // 截断产物秒长落在窗口内：9.5s ± 帧对齐误差
+    const view = wavView(write!.bytes);
+    expect(view).not.toBeNull();
+    expect(view!.dataSize / view!.byteRate).toBeGreaterThan(9);
+    expect(view!.dataSize / view!.byteRate).toBeLessThanOrEqual(9.6);
+  });
+
+  it("窗口内参考原路径直传，不写 tmp", async () => {
+    const { synth, calls } = fakeSynth();
+    const { engine, fake } = makeEngine(synth, makeFiles({ [`${VOICES}/frieren/ref-en.wav`]: pcmWav(5) }));
+    await engine.speak("hi", speakOpts({ voice: "frieren-en" }));
+    expect(calls[0]!.refAudioPath).toBe(`${VOICES}/frieren/ref-en.wav`);
+    expect(fake.writes).toHaveLength(0);
+  });
+
+  it("过短参考（<3s 下限）抛点名 EngineError：截无可截，交回退层而非 shim 英文原文", async () => {
+    const { synth, calls } = fakeSynth();
+    const { engine } = makeEngine(synth, makeFiles({ [`${VOICES}/frieren/ref-en.wav`]: pcmWav(2.5) }));
+    await expect(engine.speak("hi", speakOpts({ voice: "frieren-en" }))).rejects.toThrow(/3-10s|低于引擎/);
+    expect(calls).toHaveLength(0);
   });
 });
 
