@@ -4,8 +4,9 @@ import type { Host } from "../host.ts";
 import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, type CloneVoiceSpec } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
-import { createShimSynth, type IndexttsLabSpec, type IndexttsSynth } from "./indextts-binding.ts";
+import { createIndexttsSynth, createShimSynth, type IndexttsDaemonTuning, type IndexttsLabSpec, type IndexttsSynth } from "./indextts-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
+import { daemonEnabledFromEnv } from "../config.ts";
 
 export const INDEXTTS_ENGINE = "indextts";
 
@@ -83,8 +84,10 @@ export interface IndexttsEngineOptions {
   voicesDir: string;
   /** shim 脚本路径；缺省按仓内 scripts/shims/ 定位，测试注入假路径 */
   shimPath?: string;
-  /** 合成函数：缺省走真实 shim 会话，测试注入 fake */
+  /** 合成函数：缺省走 daemon-first 常驻会话（降级 per-call），测试注入 fake 绕开进程面 */
   synth?: IndexttsSynth;
+  /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
+  daemon?: IndexttsDaemonTuning;
 }
 
 /**
@@ -103,7 +106,11 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/indextts-shim.py", import.meta.url)),
   };
 
-  const synth = options.synth ?? createShimSynth(spec, host);
+  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
+  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
+  const daemonGate = daemonEnabledFromEnv(host.env);
+  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
+  const synth = options.synth ?? (daemonGate.enabled ? createIndexttsSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
 
   /** default 嗓参考：引擎仓自带示例（随 repo 克隆分发） */
   const defaultRefPath = (): string => `${spec.repoDir}/${DEFAULT_VOICE_REPO_REL}`;
