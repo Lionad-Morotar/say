@@ -18,6 +18,13 @@ export interface GptsovitsRequest {
   speedFactor: number;
   /** 引擎侧自然语言控制指令（S4 起，VoxCPM voice creation 消费）；缺席即无指令，shim 侧按需忽略 */
   control?: string;
+  /**
+   * 时长倍率（S5 起，IndexTTS 消费）：与 speedFactor 语义互为倒数（值越大音频越长、语速越慢），
+   * 语义反向故独立字段不复用；缺席 = 引擎默认 1.0
+   */
+  durationFactor?: number;
+  /** 情感强度预留（S5 起，IndexTTS 语义域 0-1）：需与引擎侧情感参考配对才生效，一期 adapter 不发送 */
+  emoAlpha?: number;
 }
 
 /** 就绪消息：模型加载完成的握手信号（冷启动 ~12s 后到达） */
@@ -64,6 +71,8 @@ export function encodeRequest(req: GptsovitsRequest): string {
     text_lang: req.textLang,
     speed_factor: req.speedFactor,
     ...(req.control !== undefined ? { control: req.control } : {}),
+    ...(req.durationFactor !== undefined ? { duration_factor: req.durationFactor } : {}),
+    ...(req.emoAlpha !== undefined ? { emo_alpha: req.emoAlpha } : {}),
   })}\n`;
 }
 
