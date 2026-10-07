@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import type { SpawnOutcome } from "../src/host.ts";
 import { parseConfigFile } from "../src/config.ts";
 import { INSTALL_ENGINE_SCRIPT, runEngineCommand } from "../src/engines-command.ts";
-import { createDefaultRegistry } from "../src/engines/index.ts";
+import { createDefaultRegistry, createRegistry, createGptsovitsEngine, createSystemEngine } from "../src/engines/index.ts";
 import { EXIT_FAILURE, EXIT_USAGE } from "../src/report.ts";
 import { resolvePaths } from "../src/paths.ts";
 import type { RunDeps } from "../src/deps.ts";
@@ -181,8 +181,11 @@ describe("engine use：行级手术写 config 默认引擎", () => {
     expect(fake.stderr.join("")).toContain("gptsovits");
   });
 
-  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链（gptsovits/voxcpm 已接线，示例换 firered）", async () => {
+  it("未接线但已登记的 lab 引擎可写，stderr 提示回退链（部分 registry 复现 S6 接线前的世界）", async () => {
     const fake = setup();
+    // 四引擎已全接线（S6 起），「已登记未接线」分支对真实用户不再可达；
+    // 防御分支仍在（lab 未来新增引擎），用部分 registry 精确复现该世界
+    fake.deps.registry = createRegistry([createGptsovitsEngine({ host: fake.host, labDir: "/h/.local/share/say-lab/gptsovits", voicesDir: "/h/.local/share/say/voices" }), createSystemEngine(fake.host, SAY)]);
     const code = await runEngineCommand(fake.deps, { kind: "engine", action: "use", name: "firered" });
     expect(code).toBe(0);
     expect(fake.stderr.join("")).toContain("尚未接线");

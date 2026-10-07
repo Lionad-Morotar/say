@@ -1,6 +1,8 @@
 import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
 import { resolvePaths, sayLabEngineDir } from "../paths.ts";
 import type { EngineAdapter, ResolvedConfig } from "../types.ts";
+import { createFireredEngine } from "./firered.ts";
+import type { FireredSynth } from "./firered-binding.ts";
 import { createGptsovitsEngine } from "./gptsovits.ts";
 import type { GptsovitsSynth } from "./gptsovits-binding.ts";
 import { createIndexttsEngine } from "./indextts.ts";
@@ -20,6 +22,7 @@ export const ZIPVOICE_ENGINE = "zipvoice";
 export const GPTSOVITS_ENGINE = "gptsovits";
 export const VOXCPM_ENGINE = "voxcpm";
 export const INDEXTTS_ENGINE = "indextts";
+export const FIRERED_ENGINE = "firered";
 
 export interface EngineRegistry {
   get(name: string): EngineAdapter | undefined;
@@ -87,6 +90,7 @@ export function createDefaultRegistry(
   gptsovitsSynth?: GptsovitsSynth,
   voxcpmSynth?: VoxcpmStreamSynth,
   indexttsSynth?: IndexttsSynth,
+  fireredSynth?: FireredSynth,
 ): EngineRegistry {
   const paths = resolvePaths(host.env);
   const gptsovits = createGptsovitsEngine({
@@ -107,16 +111,23 @@ export function createDefaultRegistry(
     voicesDir: paths.voicesDir,
     ...(indexttsSynth !== undefined ? { synth: indexttsSynth } : {}),
   });
+  const firered = createFireredEngine({
+    host,
+    labDir: sayLabEngineDir(host.env, "firered"),
+    voicesDir: paths.voicesDir,
+    ...(fireredSynth !== undefined ? { synth: fireredSynth } : {}),
+  });
   return createRegistry([
     createSherpaEngine({ host, modelsDir: paths.modelsDir, synth }),
     createZipvoiceEngine({ host, modelsDir: paths.modelsDir, voicesDir: paths.voicesDir, synth: cloneSynth }),
     gptsovits,
     voxcpm,
     indextts,
+    firered,
     createSystemEngine(host, sayBin),
   ]);
 }
 
-export { createSherpaEngine, createSystemEngine, createZipvoiceEngine, createGptsovitsEngine, createVoxcpmEngine, createIndexttsEngine, parseSayVoiceList };
+export { createSherpaEngine, createSystemEngine, createZipvoiceEngine, createGptsovitsEngine, createVoxcpmEngine, createIndexttsEngine, createFireredEngine, parseSayVoiceList };
 export type { SherpaSynth, ZipvoiceSynth };
 export { isSherpaVoice };
