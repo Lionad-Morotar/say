@@ -31,7 +31,7 @@ pnpm test        # vitest run（全量单测）
 pnpm typecheck   # tsc --noEmit（strict 全开）
 ```
 - 无 watch / coverage 配置；覆盖率未强制。
-- 注意：`scripts/lib/pipeline.test.mjs` 与 `scripts/lib/verify.test.mjs` 使用 node:test（非 vitest），不在 `pnpm test` 范围内，需手动 `node --test scripts/lib/` 运行（详见「测试类型」节）。
+- 注意：`scripts/lib/*.test.mjs`（8 个）使用 node:test（非 vitest），不在 `pnpm test` 范围内，需手动 `node --test scripts/lib/*.test.mjs` 运行（详见「测试类型」节；`node --test` 传目录在 Node 22 会按模块解析而失败）。
 
 ## 测试文件组织
 
@@ -174,7 +174,7 @@ describe("进程内引擎的 pcm 交付：-o 落盘", () => {
 
 **单元测试（vitest）：** 17 个 `test/*.test.ts`，纯逻辑 + fake host，毫秒级、无网络、无模型。覆盖 CLI 解析、配置、路由仲裁、回退、交付、分块、引擎适配。
 
-**脚本层测试（node:test，不在 pnpm test 内）：** `scripts/lib/pipeline.test.mjs`、`scripts/lib/verify.test.mjs`，用 `import test from "node:test"` + `node:assert/strict`，验证采集管线命令构造（ffmpeg/demucs/zipvoice 参数）与角色包校验逻辑。期望值锚定 s-bench raw-log 中已验证的真实命令形态（独立事实源）。运行：`node --test scripts/lib/`。
+**脚本层测试（node:test，不在 pnpm test 内）：** `scripts/lib/pipeline.test.mjs`、`scripts/lib/verify.test.mjs`，用 `import test from "node:test"` + `node:assert/strict`，验证采集管线命令构造（ffmpeg/demucs/zipvoice 参数）与角色包校验逻辑。期望值锚定 s-bench raw-log 中已验证的真实命令形态（独立事实源）。运行：`node --test scripts/lib/*.test.mjs`（显式文件形态；传目录 Node 22 按模块解析报错）。
 
 **跑分基线（bench/，非测试框架，是证据链系统）：**
 
