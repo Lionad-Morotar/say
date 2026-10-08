@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -351,6 +351,40 @@ describe("firered shim --daemon 活体竞态、队列容量与版本键（假引
     try {
       const out = execFileSync("python3", [SHIM, "--print-fingerprint", "--repo", join(lab, "FireRedTTS3")], { encoding: "utf8" });
       expect(out.trim()).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      rmSync(lab, { recursive: true, force: true });
+    }
+  });
+
+  // 形态级参数校验的 hermetic 面：三条新分支纯系统 python3 即可钉死，不依赖任何引擎资产——
+  // 真机验收用例被 skipIf 门控，无引擎机器（CI）上这段 CLI 逻辑必须仍有红灯可拦
+  it("--print-fingerprint 经 --lab 定位：与 --repo 同投影逐字节一致（排障面免合成参数绑架的交付本体）", () => {
+    const lab = mkdtempSync(join(tmpdir(), "say-frd-fp-lab-"));
+    try {
+      const viaLab = execFileSync("python3", [SHIM, "--print-fingerprint", "--lab", lab], { encoding: "utf8" }).trim();
+      const viaRepo = execFileSync("python3", [SHIM, "--print-fingerprint", "--repo", join(lab, "FireRedTTS3")], { encoding: "utf8" }).trim();
+      expect(viaLab).toMatch(/^[0-9a-f]{64}$/);
+      expect(viaLab).toBe(viaRepo);
+    } finally {
+      rmSync(lab, { recursive: true, force: true });
+    }
+  });
+
+  it("--print-fingerprint 定位参数双缺：argparse 形态级拒绝，exit 2 带定位指引", () => {
+    const r = spawnSync("python3", [SHIM, "--print-fingerprint"], { encoding: "utf8" });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("--print-fingerprint 需要 --lab 或 --repo 其一");
+  });
+
+  it("合成形态缺 --repo 仍拒：daemon 与 per-call 两分支不被排障放宽误伤", () => {
+    const lab = mkdtempSync(join(tmpdir(), "say-frd-norepo-"));
+    try {
+      const daemon = spawnSync("python3", [SHIM, "--daemon", "--lab", lab], { encoding: "utf8" });
+      expect(daemon.status).toBe(2);
+      expect(daemon.stderr).toContain("--repo 必填");
+      const perCall = spawnSync("python3", [SHIM, "--lab", lab], { encoding: "utf8" });
+      expect(perCall.status).toBe(2);
+      expect(perCall.stderr).toContain("--repo 必填");
     } finally {
       rmSync(lab, { recursive: true, force: true });
     }

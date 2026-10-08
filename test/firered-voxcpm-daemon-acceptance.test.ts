@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { assessPcm } from "./pcm-verdict.ts";
 import { FIRERED_WEIGHT_MARKERS, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 import { fireredDevice } from "../src/engines/firered-binding.ts";
+import type { DaemonClient } from "./firered-voxcpm-say-lab.ts";
 import {
   decodePcmToInt16,
   FIRERED_LAB,
@@ -91,8 +92,11 @@ describe("firered daemon 真机链路（握手版本键 + 温态合成数值 + �
           [FIRERED_SHIM, "--daemon", "--repo", join(FIRERED_LAB, "FireRedTTS3"), "--models", join(FIRERED_LAB, "models", "FireRedTTS3"), "--lab", lab],
           { env: { FIRERED_DEVICE: fireredDevice(process.env as Record<string, string | undefined>) }, readyTimeoutMs: 300_000 },
         );
-        const client = await handle.client;
+        // client 建立在 try 内：connect 抛错（加载 fatal、超时）时 finally 的 kill 兜底，
+        // 否则活 daemon 孤立到 idle 自收割才退场
+        let client: DaemonClient | null = null;
         try {
+          client = await handle.client;
           expect(client.readyFrame.type).toBe("ready");
           expect(client.readyFrame.engine).toBe("firered");
           expect(client.readyFrame.version).toBe("3");
@@ -139,8 +143,10 @@ describe("voxcpm daemon 真机链路（运行时类名握手 + 流式多帧数�
         const python = VOXCPM_VENV_PYTHON as string;
         // --idle-minutes 0.2 = 12s：真机验证收割机制本身（阈值的 per-engine 钉版数值归取证与 shim 缺省）
         const handle = startDaemonShim(python, [VOXCPM_SHIM, "--daemon", "--models", join(VOXCPM_LAB, "models"), "--lab", lab, "--idle-minutes", "0.2"], { readyTimeoutMs: 300_000 });
-        const client = await handle.client;
+        // client 建立在 try 内：connect 失败走 finally 清理，不给 daemon 留 read 阻塞顶住收割
+        let client: DaemonClient | null = null;
         try {
+          client = await handle.client;
           expect(client.readyFrame.engine).toBe("voxcpm");
           // D2 真机锚：architecture=voxcpm2 分派的运行时类名与 TS 钉版 DAEMON_ENGINE_VERSION 同字面——
           // 若上游换类名，握手层会拒载降级（功能不坏），这里先让套件红出声告警
@@ -152,13 +158,15 @@ describe("voxcpm daemon 真机链路（运行时类名握手 + 流式多帧数�
           expect(last.type).toBe("audio");
           expect(last.done).toBe(true);
           const audios = frames.filter((f) => f.type === "audio");
-          expect(audios.length, "流式形态应产出多帧（缓存协议尾块 done=true）").toBeGreaterThanOrEqual(1);
+          // 多帧下沿取 2：单块流是协议合法结局但意味着流式退化，而本用例的机制面正是「多帧写回同一连接」
+          // ——≥1 会放行整句一帧的形态回归（fake 套件注入假 chunk 看不见真分块行为变化，缝隙只能在这层封）
+          expect(audios.length, "流式形态应产出多帧（缓存协议尾块 done=true）").toBeGreaterThanOrEqual(2);
           for (const mid of audios.slice(0, -1)) expect(mid.done).toBe(false);
           const { pcm, sampleRate } = pcmFromFrames(audios);
           const verdict = assessPcm(pcm, sampleRate);
           expect(verdict.ok, `流式合成数值退化：${verdict.defect}（rms=${verdict.rms.toFixed(0)} dur=${verdict.durationS.toFixed(2)}s）`).toBe(true);
         } finally {
-          client.close();
+          client?.close();
         }
         // idle 自收割真形态：不 kill、不发 shutdown，进程到阈自退 exit 0，日志留痕、注册点清净
         const exit = await handle.exit;
@@ -177,7 +185,11 @@ describe("voxcpm daemon 真机链路（运行时类名握手 + 流式多帧数�
       await withTempLab(async (lab) => {
         const python = VOXCPM_VENV_PYTHON as string;
         const first = startDaemonShim(python, [VOXCPM_SHIM, "--daemon", "--models", join(VOXCPM_LAB, "models"), "--lab", lab], { readyTimeoutMs: 300_000 });
-        const ready1 = await first.client;
+        // connect 失败路径 SIGTERM 收尾：正常流走 SIGKILL，异常时不给在位 daemon 留到 idle 收割的窗口
+        const ready1 = await first.client.catch((error: unknown) => {
+          first.kill("SIGTERM");
+          throw error;
+        });
         const pid = Number(ready1.readyFrame.pid);
         ready1.close();
         first.kill("SIGKILL"); // 硬杀：cleanup 不跑，sock/pid 残留挡路
@@ -185,8 +197,8 @@ describe("voxcpm daemon 真机链路（运行时类名握手 + 流式多帧数�
         expect(existsSync(join(lab, "daemon.sock"))).toBe(true); // 残file 在场 = 本用例的前置事实
 
         const second = startDaemonShim(python, [VOXCPM_SHIM, "--daemon", "--models", join(VOXCPM_LAB, "models"), "--lab", lab], { readyTimeoutMs: 300_000 });
-        const ready2 = await second.client;
         try {
+          const ready2 = await second.client;
           expect(Number(ready2.readyFrame.pid)).not.toBe(pid); // 真重 bind（新进程持有注册点）
           const frames = await ready2.request({ type: "synthesize", id: 1, text: "残file 顶掉后的第一条，必须出声。" }, 300_000);
           const { pcm, sampleRate } = pcmFromFrames(frames.filter((f) => f.type === "audio"));

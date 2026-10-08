@@ -39,7 +39,9 @@ function allPresent(labDir: string, rels: readonly string[]): boolean {
 }
 
 /**
- * firered 真合成面探活：venv+torch、manifest 11 件权重在场、default 嗓参考在场。
+ * firered 真合成面探活：venv+torch、Base 加载面 4 件权重在场、default 嗓参考在场。
+ * 只查 4 件而非 manifest 全 11 件是刻意选择：shim 走 Base 类规避 Instruct，instruct 权重缺席
+ * 的合法安装若全查会被误判成缺引擎 skip（假绿方向的反面是假 skip）。损坏安装交给加载失败响亮红。
  * torch import 探测 120s 预算：venv 冷 import torch 是秒级到十秒级（首跑 MPS 初始化不在 import 期）。
  */
 export const FIRERED_VENV_PYTHON: string | null = resolveVenv(FIRERED_LAB, "torch", 120_000);
@@ -56,7 +58,11 @@ export const FIRERED_PROMPT_WAV = join(FIRERED_LAB, "prompts/prompt_2.wav");
 export const FIRERED_PROMPT_TEXT = "对，所以说你现在的话，这个账单的话，你既然说能处理，那你就想办法处理掉。";
 export const FIRERED_SYNTH = FIRERED_WEIGHTS_PRESENT && existsSync(FIRERED_PROMPT_WAV);
 
-/** voxcpm 真合成面探活：venv+voxcpm 包 import、models 七件在场（safetensors 主权重非占位） */
+/**
+ * voxcpm 真合成面探活：venv+voxcpm 包 import、加载关键路径 4 件在场（主权重/vae/config/tokenizer）。
+ * 只查 4 件不查 manifest 全 7 件：tokenizer 系三件由 config 装配期连带使用，缺件会让 from_pretrained
+ * 响亮 fatal 而非静默 skip——探活只把脉「值得 spawn」，完备性交给加载失败出声。
+ */
 export const VOXCPM_VENV_PYTHON: string | null = resolveVenv(VOXCPM_LAB, "voxcpm", 120_000);
 export const VOXCPM_SYNTH =
   VOXCPM_VENV_PYTHON !== null &&
@@ -97,23 +103,25 @@ export function startDaemonShim(
  * daemon socket 客户端（验收直驱面）：连接（含解释器启动空窗重试）→ 收 ready →
  * 逐请求收帧（一行一请求，收至 done 尾帧或 error 终结）。
  * 行切分走 shift 消费——多帧收集重复计数的病理在 S5-2 套件实跑暴露过一次，这里直接钉死正确形态。
+ * 行缓冲持 Buffer 按 0x0a 切分后才解码：socket 不保留写边界，error 帧中文文本的多字节字符
+ * 可能被 chunk 边界切断（逐 chunk toString 出 U+FFFD），与生产侧 daemon-session 同一病理同形修复。
  */
 export class DaemonClient {
   private readonly conn: net.Socket;
-  private buf = "";
+  private buf: Buffer = Buffer.alloc(0);
   private readonly lines: string[] = [];
   private streamEnded = false;
   private pendingResolve: ((line: string | null) => void) | null = null;
 
   private constructor(conn: net.Socket) {
     this.conn = conn;
-    conn.on("data", (chunk) => {
-      this.buf += chunk.toString("utf8");
+    conn.on("data", (chunk: Buffer) => {
+      this.buf = this.buf.length === 0 ? chunk : Buffer.concat([this.buf, chunk]);
       for (;;) {
-        const cut = this.buf.indexOf("\n");
+        const cut = this.buf.indexOf(0x0a);
         if (cut < 0) break;
-        const line = this.buf.slice(0, cut).trim();
-        this.buf = this.buf.slice(cut + 1);
+        const line = this.buf.subarray(0, cut).toString("utf8").trim();
+        this.buf = this.buf.subarray(cut + 1);
         if (line.length === 0) continue;
         if (this.pendingResolve !== null) {
           const r = this.pendingResolve;
@@ -140,18 +148,19 @@ export class DaemonClient {
   static async connect(sockPath: string, timeoutMs: number, procExit?: Promise<{ code: number | null }>): Promise<DaemonClient> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
+      let client: DaemonClient | null = null;
       try {
-        const client = await DaemonClient.tryConnect(sockPath);
+        client = await DaemonClient.tryConnect(sockPath);
         const line = await client.nextLine(timeoutMs - (Date.now() - (deadline - timeoutMs)));
         if (line === null) throw new Error("daemon 在 ready 前断开连接");
         const ready = JSON.parse(line) as Record<string, unknown>;
-        if (ready.type !== "ready") {
-          client.conn.destroy();
-          throw new Error(`首帧不是 ready：${line.slice(0, 200)}`);
-        }
+        if (ready.type !== "ready") throw new Error(`首帧不是 ready：${line.slice(0, 200)}`);
         client.readyFrame = ready;
         return client;
       } catch (error) {
+        // 失败路径必须掐掉已建立的连接：shim 的 idle 自收割判据要求 clients 空，
+        // 泄漏一条 read 阻塞连接就能把测试 daemon 永久顶住不收割
+        client?.conn.destroy();
         if (procExit !== undefined) {
           const settled = await Promise.race([procExit.then(() => "exited"), Promise.resolve("alive")]);
           if (settled === "exited") throw new Error(`daemon 进程已退出且未就绪：${String((error as Error).message)}`);
@@ -180,11 +189,17 @@ export class DaemonClient {
     if (queued !== undefined) return Promise.resolve(queued);
     if (this.streamEnded) return Promise.resolve(null);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("等待响应帧超时")), Math.max(1_000, timeoutMs));
-      this.pendingResolve = (line) => {
+      const timer = setTimeout(() => {
+        // settle 前先清自己的 resolver：否则超时后迟到的帧被 stale resolver 消费丢弃、不入队列，
+        // 与生产侧 waitFrame 的语义不对称（daemon-session 同款病理同款修）
+        if (this.pendingResolve === resolver) this.pendingResolve = null;
+        reject(new Error("等待响应帧超时"));
+      }, Math.max(1_000, timeoutMs));
+      const resolver = (line: string | null) => {
         clearTimeout(timer);
         resolve(line);
       };
+      this.pendingResolve = resolver;
     });
   }
 
