@@ -114,8 +114,8 @@ export function createShimSynth(spec: GptsovitsLabSpec, host: Host): GptsovitsSy
 
 /** 握手版本键的引擎侧期望：protocol 与 shim PROTOCOL_VERSION 同仓同版（漂移只发生在旧代码拉起的旧 daemon，那正是握手要拒的对象）；
  *  engineVersion 与 shim 构造 TTS_Config 钉死的 version 同源。不符 = 过期 daemon → kill 重拉一次 */
-const DAEMON_PROTOCOL_VERSION = "2";
-const DAEMON_ENGINE_VERSION = "v2";
+export const DAEMON_PROTOCOL_VERSION = "2";
+export const DAEMON_ENGINE_VERSION = "v2";
 
 /**
  * 队满拒转的 message 前缀：daemon 侧单飞队列上限 4，第 5 路在途请求收到携带该 message 的 error 帧。

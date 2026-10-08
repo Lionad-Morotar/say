@@ -144,8 +144,8 @@ export function createShimStreamSynth(spec: VoxcpmLabSpec, host: Host): VoxcpmSt
  *  engineVersion 钉 "VoxCPM2Model"——shim ready 帧的 version 走运行时类名（architecture=voxcpm2 的
  *  分派产物），类名不符 = 模型代际漂移，握手拒载自动重拉降级；config.json 在权重指纹清单内，
  *  代际变更必同时击穿指纹，双路自兜（决策台账 D2 取证） */
-const DAEMON_PROTOCOL_VERSION = "2";
-const DAEMON_ENGINE_VERSION = "VoxCPM2Model";
+export const DAEMON_PROTOCOL_VERSION = "2";
+export const DAEMON_ENGINE_VERSION = "VoxCPM2Model";
 /** 闲置收割缺省档：voxcpm 4.6GB 档取默认档（burst 间隔容忍度高于 firered 的 5 分钟档），
  *  单源在 config 内置表，[daemon] 配置层经装配点覆盖 */
 const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.voxcpm;

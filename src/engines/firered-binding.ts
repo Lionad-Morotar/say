@@ -143,8 +143,8 @@ export function createShimSynth(spec: FireredLabSpec, host: Host): FireredSynth 
 
 /** 握手版本键的引擎侧期望：protocol 与 shim PROTOCOL_VERSION 同仓同版（跨引擎共用一个协议版本轴）；
  *  engineVersion 与 shim ready 帧字面钉死的 "3" 同源。不符 = 过期 daemon → kill 重拉一次 */
-const DAEMON_PROTOCOL_VERSION = "2";
-const DAEMON_ENGINE_VERSION = "3";
+export const DAEMON_PROTOCOL_VERSION = "2";
+export const DAEMON_ENGINE_VERSION = "3";
 /** 闲置收割缺省档：firered 39GB 档内存占用，用完尽快让出，故取内置表最短档；
  *  单源在 config 内置表，[daemon] 配置层经装配点覆盖；由 shim daemon 自计时自退 */
 const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.firered;

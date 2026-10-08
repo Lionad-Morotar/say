@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
-import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { DAEMON_ENGINE_VERSION, DAEMON_PROTOCOL_VERSION, DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
 import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
@@ -59,12 +59,11 @@ function writeStubEngine(lab: string): void {
  * 连上 daemon 读到 ready 帧即收——假引擎加载毫秒级，但 python 解释器自身启动就有
  * sock 未落位的空窗：ENOENT/ECONNREFUSED 必须重试到就绪或超时，单次 connect 会撞空窗误报。
  */
-async function waitReadyFrame(sockPath: string, timeoutMs = 15_000): Promise<void> {
+async function waitReadyFrame(sockPath: string, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      await onceReadyFrame(sockPath);
-      return;
+      return await onceReadyFrame(sockPath);
     } catch (error) {
       if (Date.now() >= deadline) throw error;
       await sleep(60);
@@ -72,7 +71,7 @@ async function waitReadyFrame(sockPath: string, timeoutMs = 15_000): Promise<voi
   }
 }
 
-function onceReadyFrame(sockPath: string): Promise<void> {
+function onceReadyFrame(sockPath: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const conn = net.connect(sockPath);
     let buf = "";
@@ -82,10 +81,21 @@ function onceReadyFrame(sockPath: string): Promise<void> {
     }, 2000);
     conn.on("data", (chunk) => {
       buf += chunk.toString("utf8");
-      if (buf.includes('"type": "ready"')) {
-        clearTimeout(timer);
-        conn.destroy();
-        resolve();
+      for (const line of buf.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("{")) continue;
+        let frame: Record<string, unknown>;
+        try {
+          frame = JSON.parse(trimmed) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (frame.type === "ready") {
+          clearTimeout(timer);
+          conn.destroy();
+          resolve(frame);
+          return;
+        }
       }
     });
     conn.on("error", (error) => {
@@ -220,6 +230,22 @@ describe("shim --daemon 活体竞态与队列容量（假引擎桩）", () => {
     });
   }, 60_000);
 
+  it("ready 帧握手版本键与 binding 常量对拍（gptsovits 侧：protocol / version 跨语言字面漂移即测试红）", async () => {
+    await withTempLab(async (lab) => {
+      writeStubEngine(lab);
+      const shim = startShim(lab);
+      const sockPath = join(lab, "daemon.sock");
+      try {
+        const frame = await waitReadyFrame(sockPath);
+        expect(frame.protocol).toBe(DAEMON_PROTOCOL_VERSION);
+        expect(frame.version).toBe(DAEMON_ENGINE_VERSION);
+      } finally {
+        shim.proc.kill("SIGTERM");
+        await shim.exit;
+      }
+    });
+  }, 30_000);
+
   it("队列容量上限 4：六路请求恰一路收拒转 error 帧（message 与 TS 常量逐字一致），其余五路全出声", async () => {
     await withTempLab(async (lab) => {
       writeStubEngine(lab);
@@ -277,5 +303,14 @@ describe("shim --daemon 活体竞态与队列容量（假引擎桩）", () => {
     const m = /--idle-minutes", type=float, default=([\d.]+)/.exec(py);
     expect(m).not.toBeNull();
     expect(Number(m?.[1])).toBe(BUILTIN_DAEMON_IDLE.gptsovits);
+  });
+
+  it("gptsovits 版本字面跨语言对拍：shim 源内 TTS_Config 默认 version 全部 = TS 常量（真引擎可能采信该默认，漂移即握手失配）", () => {
+    // ready 帧的 version 走 str(config.version)：桩引擎硬编码自述值、掩盖 shim 传入的默认，
+    // 故帧面断言只能钉桩↔常量；真机 TTS_Config 是否采信该默认不可知，源内字面须单独钉死。
+    const py = readFileSync(SHIM, "utf8");
+    const literals = [...py.matchAll(/"version": "([^"]+)"/g)].map((m) => m[1] ?? "");
+    expect(literals.length).toBeGreaterThan(0);
+    expect(literals.every((v) => v === DAEMON_ENGINE_VERSION)).toBe(true);
   });
 });

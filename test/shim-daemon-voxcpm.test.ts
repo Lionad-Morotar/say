@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { DAEMON_ENGINE_VERSION, DAEMON_PROTOCOL_VERSION } from "../src/engines/voxcpm-binding.ts";
 import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
@@ -283,8 +284,8 @@ describe("voxcpm shim --daemon 竞态、队列与版本键（假引擎桩）", (
         })();
         expect(frame.type).toBe("ready");
         expect(frame.engine).toBe("voxcpm");
-        expect(frame.version).toBe("VoxCPM2Model"); // 桩类名镜像真机 architecture=voxcpm2 的运行时类名
-        expect(frame.protocol).toBe("2");
+        expect(frame.version).toBe(DAEMON_ENGINE_VERSION); // 桩类名镜像真机 architecture=voxcpm2 的运行时类名；与 binding 常量对拍
+        expect(frame.protocol).toBe(DAEMON_PROTOCOL_VERSION);
         expect(String(frame.weights_fingerprint)).toMatch(/^[0-9a-f]{64}$/);
         expect(typeof frame.pid).toBe("number");
         expect(Number(frame.pid)).toBeGreaterThan(0);
@@ -457,7 +458,7 @@ describe("voxcpm shim per-call 形态真执行（与 daemon 共享 stream_pcm �
     await withTempLab(async (lab) => {
       writeStubEngine(lab);
       const out = await drivePerCall(lab, 3, 1);
-      expect(out.ready).toMatchObject({ type: "ready", engine: "voxcpm", version: "VoxCPM2Model", device: "cpu" });
+      expect(out.ready).toMatchObject({ type: "ready", engine: "voxcpm", version: DAEMON_ENGINE_VERSION, device: "cpu" });
       expect(out.ready.protocol).toBeUndefined(); // per-call 传输层握手版本键缺省是既有钉版（daemon 独有）
       expect(out.ready.weights_fingerprint).toBeUndefined();
       expect(out.frames.map((f) => f.done)).toEqual([false, false, true]);

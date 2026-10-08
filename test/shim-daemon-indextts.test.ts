@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { DAEMON_ENGINE_VERSION, DAEMON_PROTOCOL_VERSION } from "../src/engines/indextts-binding.ts";
 import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
@@ -257,8 +258,8 @@ describe("indextts shim --daemon 活体竞态、队列容量与版本键（假�
         })();
         expect(frame.type).toBe("ready");
         expect(frame.engine).toBe("indextts");
-        expect(frame.version).toBe("2.5");
-        expect(frame.protocol).toBe("2");
+        expect(frame.version).toBe(DAEMON_ENGINE_VERSION); // 与 binding 常量对拍：shim ready 帧漂移即测试红
+        expect(frame.protocol).toBe(DAEMON_PROTOCOL_VERSION);
         expect(String(frame.weights_fingerprint)).toMatch(/^[0-9a-f]{64}$/);
         expect(typeof frame.pid).toBe("number");
         expect(Number(frame.pid)).toBeGreaterThan(0);
