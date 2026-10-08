@@ -11,9 +11,9 @@ import { createFakeHost } from "./fake-host.ts";
 
 const config: ResolvedConfig = { engine: "gptsovits", voice: null, rateWpm: 175, fallback: "system", debug: true };
 
-function debugLine(engineName: string): string {
+function debugLine(engineName: string, routedEngine = engineName): string {
   const fake = createFakeHost({ env: { HOME: "/h" } });
-  writeDebug(fake.host, config, { code: EXIT_OK, engineName }, "frieren", 2, { started: 0, synth: 1200, play: 800 });
+  writeDebug(fake.host, config, { code: EXIT_OK, engineName }, "frieren", 2, { started: 0, synth: 1200, play: 800 }, routedEngine);
   return fake.stderr.join("");
 }
 
@@ -53,6 +53,12 @@ describe("writeDebug：SAY_DEBUG daemon 段渲染", () => {
     const line = debugLine("sherpa");
     expect(line).not.toContain("daemon=");
     expect(line).toContain("engine=sherpa voice=");
+  });
+
+  it("回退到系统嗓：daemon= 段按被尝试的引擎渲染，engine=system 不掩盖降级事实", () => {
+    recordDaemonForm("gptsovits", "per-call");
+    const line = debugLine("system", "gptsovits");
+    expect(line).toContain("engine=system daemon=per-call");
   });
 });
 

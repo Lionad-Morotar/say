@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { assessPcm } from "./pcm-verdict.ts";
 import { FIRERED_WEIGHT_MARKERS, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
-import { fireredDevice } from "../src/engines/firered-binding.ts";
+import { DAEMON_ENGINE_VERSION, DAEMON_PROTOCOL_VERSION, fireredDevice } from "../src/engines/firered-binding.ts";
+import { DAEMON_ENGINE_VERSION as VOXCPM_DAEMON_ENGINE_VERSION } from "../src/engines/voxcpm-binding.ts";
 import type { DaemonClient } from "./firered-voxcpm-say-lab.ts";
 import {
   decodePcmToInt16,
@@ -99,8 +100,8 @@ describe("firered daemon 真机链路（握手版本键 + 温态合成数值 + �
           client = await handle.client;
           expect(client.readyFrame.type).toBe("ready");
           expect(client.readyFrame.engine).toBe("firered");
-          expect(client.readyFrame.version).toBe("3");
-          expect(client.readyFrame.protocol).toBe("2");
+          expect(client.readyFrame.version).toBe(DAEMON_ENGINE_VERSION);
+          expect(client.readyFrame.protocol).toBe(DAEMON_PROTOCOL_VERSION);
           // 真权重加载路径的 daemon 自述指纹 = TS 对同一（tmp）投影现算：跨语言公式在真实运行体上一致
           expect(String(client.readyFrame.weights_fingerprint)).toBe(weightsFingerprint(lab, FIRERED_WEIGHT_MARKERS));
           expect(Number(client.readyFrame.pid)).toBeGreaterThan(0);
@@ -148,9 +149,9 @@ describe("voxcpm daemon 真机链路（运行时类名握手 + 流式多帧数�
         try {
           client = await handle.client;
           expect(client.readyFrame.engine).toBe("voxcpm");
-          // D2 真机锚：architecture=voxcpm2 分派的运行时类名与 TS 钉版 DAEMON_ENGINE_VERSION 同字面——
+          // D2 真机锚：architecture=voxcpm2 分派的运行时类名与 TS 钉版 DAEMON_ENGINE_VERSION 直接对拍——
           // 若上游换类名，握手层会拒载降级（功能不坏），这里先让套件红出声告警
-          expect(String(client.readyFrame.version)).toBe("VoxCPM2Model");
+          expect(String(client.readyFrame.version)).toBe(VOXCPM_DAEMON_ENGINE_VERSION);
           expect(String(client.readyFrame.weights_fingerprint)).toBe(weightsFingerprint(lab, VOXCPM_WEIGHT_MARKERS));
 
           const frames = await client.request({ type: "synthesize", id: 1, text: "热启动验收，流式多帧的每个块都必须有能量。" }, 300_000);

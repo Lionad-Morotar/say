@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { FIRERED_WEIGHT_MARKERS, GPTSOVITS_WEIGHT_MARKERS, INDEXTTS_WEIGHT_MARKERS, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
+import { ENGINES } from "../scripts/lib/engine-manifest.mjs";
 
 /**
  * 权重指纹的跨语言公式一致性测试（daemon 版本握手的承重墙）。
@@ -191,4 +192,32 @@ describe("indextts 的 TS 与 Python shim 指纹对拍（S3：同公式、per-en
       expect(py).toBe(ts);
     });
   });
+});
+
+describe("marker 清单与安装 manifest 对拍（权重面单源，防 manifest 单侧扩容静默漂移）", () => {
+  /**
+   * marker 清单是权重指纹的输入，其真源在 engine-manifest.mjs 的 weights：归档条目安装成功写
+   * `<file>/.install-ok` marker，文件级条目直接用 file 路径；auto 层是引擎首跑自拉的运行时产物、
+   * 非安装事件，不进指纹（见 daemon-session.ts 各数组注释）。install-engine.mjs 的 ensureWeight
+   * 逐文件幂等（sizeMatches 命中即 verified-existing，不重写 mtime），manifest 单侧扩容不会重装
+   * 既有权重、指纹字节不变，运行中的旧 daemon 握手照旧通过、继续用旧权重集服务，静默漂移。
+   * 故此处把两侧钉成同一清单：manifest 增删而未同步 marker 数组即测试红。
+   */
+  const expectedMarkers = (engine: string): string[] =>
+    ENGINES[engine]!.weights
+      .filter((w) => w.tier !== "auto")
+      .map((w) => (w.archive !== undefined ? `${w.file}/.install-ok` : w.file));
+
+  const cases: ReadonlyArray<[string, readonly string[]]> = [
+    ["gptsovits", GPTSOVITS_WEIGHT_MARKERS],
+    ["indextts", INDEXTTS_WEIGHT_MARKERS],
+    ["firered", FIRERED_WEIGHT_MARKERS],
+    ["voxcpm", VOXCPM_WEIGHT_MARKERS],
+  ];
+
+  for (const [engine, markers] of cases) {
+    it(`${engine}：marker 清单 = manifest weights（归档取 .install-ok、排除 auto 层）逐条一致`, () => {
+      expect([...markers].sort()).toEqual(expectedMarkers(engine).sort());
+    });
+  }
 });

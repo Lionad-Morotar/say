@@ -103,6 +103,9 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
 
   const route = await routeEngine(config, deps.registry);
   const engine = route.engine;
+  // daemon= 段按路由到的引擎查形态：回退到系统嗓后 outcome.engineName 会变成 system，
+  // 而形态记在被尝试的引擎名下，渲染面凭此才看得见「走过 daemon 层但降级了」
+  const routedEngine = engine?.name ?? config.engine;
   const target = request.output;
   const temp = target === null ? null : `${target}.${host.pid}.tmp`;
   const opts: SpeakOptions = { voice: route.voice, rateWpm: config.rateWpm, output: temp };
@@ -119,6 +122,6 @@ export async function run(argv: readonly string[], deps: RunDeps): Promise<numbe
       ? await speakChunked(ctx, engine, chunks)
       : await speakOnce(ctx, engine, chunks[0] ?? text);
 
-  writeDebug(host, config, outcome, opts.voice, chunks.length, timing);
+  writeDebug(host, config, outcome, opts.voice, chunks.length, timing, routedEngine);
   return outcome.code;
 }
