@@ -179,6 +179,20 @@ describe("daemon 管理子命令解析（热启动 S6）", () => {
     expect(parseArgv(["daemon", "ls", "now"])).toMatchObject({ kind: "usage-error" });
   });
 
+  it("daemon stop 带引擎名是停机请求", () => {
+    expect(parseArgv(["daemon", "stop", "indextts"])).toEqual({ kind: "daemon", action: "stop", target: "indextts" });
+  });
+
+  it("无参与 --all 同义全停（票 05 的 [engine|--all] 可选形态）", () => {
+    expect(parseArgv(["daemon", "stop"])).toEqual({ kind: "daemon", action: "stop", target: "all" });
+    expect(parseArgv(["daemon", "stop", "--all"])).toEqual({ kind: "daemon", action: "stop", target: "all" });
+  });
+
+  it("daemon stop 带多余参数吵闹报错；陌生引擎名放行给编排层校验（解析忠实映射）", () => {
+    expect(parseArgv(["daemon", "stop", "gptsovits", "now"])).toMatchObject({ kind: "usage-error" });
+    expect(parseArgv(["daemon", "stop", "sherpa"])).toEqual({ kind: "daemon", action: "stop", target: "sherpa" });
+  });
+
   it("daemon 后跟其他词整句回落文本合成，与 engine 同一兼容纪律", () => {
     expect(parseArgv(["daemon", "is", "quiet"])).toMatchObject({
       kind: "speak",

@@ -100,6 +100,16 @@ describe("runDaemonLs：全表探测", () => {
     expect(stdoutOf(fake)).toContain("ENGINE  STATE");
   });
 
+  it("daemon stop 分派到停机编排：零注册点全 absent 幂等 exit 0", async () => {
+    const { fake, deps } = setup();
+    const code = await runDaemonCommand(deps, { kind: "daemon", action: "stop", target: "all" });
+    expect(code).toBe(EXIT_OK);
+    const out = stdoutOf(fake);
+    for (const engine of DAEMON_ENGINES) expect(out).toContain(`${engine}`);
+    expect(out.trim().split("\n")).toHaveLength(DAEMON_ENGINES.length);
+    expect(out).toContain("absent");
+  });
+
   it("并发全表：一引擎真 warm 三引擎 idle，warm 行带 pid/rss，耗时不随引擎数线性堆叠", async () => {
     const { fake, deps, root } = setup(`  2097152  00:45:12\n`);
     const paths = daemonPathsOf({ XDG_DATA_HOME: root }, "gptsovits");

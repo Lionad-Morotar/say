@@ -3,6 +3,7 @@ import { DAEMON_ENGINES, type DaemonEngine } from "./config.ts";
 import type { RunDeps } from "./deps.ts";
 import { EXIT_OK } from "./report.ts";
 import { probeDaemonStatus, type DaemonStatusRow } from "./daemon-status.ts";
+import { runDaemonStop } from "./daemon-stop.ts";
 
 /**
  * `say daemon ls` 编排（热启动 S6 用户面）：逐引擎只读探测，一行一态。
@@ -45,5 +46,6 @@ export async function runDaemonLs(deps: RunDeps): Promise<number> {
 /** daemon 子命令分派入口（speak.ts 经 request.kind === "daemon" 送达） */
 export async function runDaemonCommand(deps: RunDeps, request: Extract<CliRequest, { kind: "daemon" }>): Promise<number> {
   if (request.action === "ls") return runDaemonLs(deps);
-  return EXIT_OK; // 类型收敛兜底：action 联合当前只有 ls，新动作接入必须显式分支
+  if (request.action === "stop") return runDaemonStop(deps.host, request.target);
+  return EXIT_OK; // 类型收敛兜底：新动作接入必须显式分支，不给静默空转留缝
 }

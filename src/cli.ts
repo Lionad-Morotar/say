@@ -19,8 +19,10 @@ export type CliRequest =
     }
   /** 引擎管理子命令（say engine ls/use），编排层经注册表与 say-lab 安装状态执行 */
   | { kind: "engine"; action: "ls" | "use"; name: string | null }
-  /** 常驻 daemon 管理子命令（say daemon ls/stop，热启动 S6）：ls 只读探测注册点，stop 的目标是引擎名或 all */
+  /** 常驻 daemon 管理子命令（say daemon ls/stop，热启动 S6）：ls 只读探测注册点；
+   *  stop 目标是引擎名或 "all"（无参与 --all 同义，票 05 形态），合法性校验归编排层 */
   | { kind: "daemon"; action: "ls" }
+  | { kind: "daemon"; action: "stop"; target: string }
   | { kind: "passthrough"; argv: string[] }
   | { kind: "usage-error"; message: string };
 
@@ -84,6 +86,10 @@ export function parseArgv(argv: readonly string[]): CliRequest {
     if (second === "ls") {
       if (third !== undefined) return { kind: "usage-error", message: "daemon ls 不接受额外参数" };
       return { kind: "daemon", action: "ls" };
+    }
+    if (second === "stop") {
+      if (fourth !== undefined) return { kind: "usage-error", message: "daemon stop 不接受额外参数" };
+      return { kind: "daemon", action: "stop", target: third === undefined || third === "--all" ? "all" : third };
     }
   }
 
