@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -88,16 +88,21 @@ describe("daemon-circuit：滑动窗计数与开窗", () => {
 });
 
 describe("daemon-circuit：清零、损坏自愈与落盘卫生", () => {
-  it("成功清零删文件；对不存在的记录再清是安全的", () => {
+  it("成功清零为原子写零记录（文件仍在、劣化史收敛）；对不存在的记录再清是安全的", () => {
     withTempDir((dir) => {
       const { handle } = makeHandle(dir);
       recordCircuitFailure(handle);
       clearCircuitFailures(handle);
-      expect(existsSync(handle.path)).toBe(false);
+      const rec = readCircuitRecord(handle.path);
+      expect(existsSync(handle.path)).toBe(true);
+      expect(rec?.count).toBe(0);
+      expect(rec?.openedAt).toBeNull();
+      expect(rec?.freshAt).toBe(rec?.lastAt);
       expect(isCircuitOpen(handle)).toBe(false);
       expect(() => clearCircuitFailures(handle)).not.toThrow();
     });
   });
+
 
   it("损坏文件判熔断闭合（误闸拦路比漏闸更伤），下一次写入覆盖自愈", () => {
     withTempDir((dir) => {
@@ -120,6 +125,84 @@ describe("daemon-circuit：清零、损坏自愈与落盘卫生", () => {
       const ghost = join(dir, "no/such/dir/daemon-failures");
       expect(() => recordCircuitFailure({ path: ghost, now: handle.now })).not.toThrow();
       expect(() => clearCircuitFailures({ path: ghost, now: handle.now })).not.toThrow();
+    });
+  });
+});
+
+describe("daemon-circuit：并发清零不被陈旧写回复活", () => {
+  /**
+   * record 的时钟取用序 = at → prev 读 → tmp 名 → 复读 → 写回：
+   * 测试把并发清零挂在自己 handle 的第二次 now() 副作用上，即确定性造出
+   * 「首读到旧记录 → 清零落地 → 复读见到新态」的交错（真机两处读相邻，窗为微秒级）。
+   */
+  function scriptedClock(path: string, at: number, sideEffect: () => void): CircuitHandle {
+    let calls = 0;
+    return {
+      path,
+      now: () => {
+        calls += 1;
+        if (calls === 2) sideEffect();
+        return at;
+      },
+    };
+  }
+
+  it("B 首读旧计数 → A 清零 → B 写回放弃：零记录保持，冷却史不复活", () => {
+    withTempDir((dir) => {
+      const path = join(dir, "daemon-failures");
+      writeFileSync(path, JSON.stringify({ count: 2, lastAt: 999_000, openedAt: null }));
+      const handleA: CircuitHandle = { path, now: () => 1_000_000 };
+      recordCircuitFailure(scriptedClock(path, 1_000_000, () => clearCircuitFailures(handleA)));
+      expect(readCircuitRecord(path)).toEqual({ count: 0, lastAt: 1_000_000, openedAt: null, freshAt: 1_000_000 });
+    });
+  });
+
+  it("B 首读旧计数 → 注册点被外部删除 → B 写回放弃：不从陈旧基线复活", () => {
+    withTempDir((dir) => {
+      const path = join(dir, "daemon-failures");
+      writeFileSync(path, JSON.stringify({ count: 2, lastAt: 999_000, openedAt: null }));
+      recordCircuitFailure(scriptedClock(path, 1_000_000, () => unlinkSync(path)));
+      expect(readCircuitRecord(path)).toBeNull();
+      expect(isCircuitOpen({ path, now: () => 1_000_000 })).toBe(false);
+    });
+  });
+
+  it("他 CLI 计数落在 B 两读之间：B 复读按新基线续计，计数不丢、开窗不漏", () => {
+    withTempDir((dir) => {
+      const path = join(dir, "daemon-failures");
+      writeFileSync(path, JSON.stringify({ count: 2, lastAt: 999_000, openedAt: null }));
+      const handleA: CircuitHandle = { path, now: () => 1_000_000 };
+      recordCircuitFailure(scriptedClock(path, 1_000_000, () => recordCircuitFailure(handleA)));
+      // A 先把 {2} 推到 {3} 并开窗，B 复读取 {3} 基线续成 {4}——旧实现会写回 {3} 吞掉 A 的那一次
+      const rec = readCircuitRecord(path);
+      expect(rec?.count).toBe(4);
+      expect(rec?.openedAt).toBe(1_000_000);
+    });
+  });
+
+  it("同毫秒清零与计数连环混写：tmp 残件互不吞噬，同毫秒按清零获胜收口", () => {
+    withTempDir((dir) => {
+      const { handle } = makeHandle(dir);
+      recordCircuitFailure(handle);
+      clearCircuitFailures(handle);
+      // 与清零同毫秒（假时钟恒值）的失败按「清零不早于失败时刻」放弃写回——同毫秒碰撞两形态：
+      // tmp 名带 pid 分区后跨进程不再互噬，进程内顺序写最后 rename 决胜，此处钉死清零获胜语义
+      recordCircuitFailure(handle);
+      expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toHaveLength(0);
+      expect(readCircuitRecord(handle.path)).toEqual({ count: 0, lastAt: handle.now(), openedAt: null, freshAt: handle.now() });
+    });
+  });
+
+  it("清零后的首个失败从零记录续起 1，哨兵随记录传播（更晚到达的陈旧写回仍认得出清零证据）", () => {
+    withTempDir((dir) => {
+      const { handle, advance } = makeHandle(dir);
+      recordCircuitFailure(handle);
+      clearCircuitFailures(handle);
+      const clearedAt = handle.now();
+      advance(1);
+      recordCircuitFailure(handle);
+      const rec = readCircuitRecord(handle.path);
+      expect(rec).toEqual({ count: 1, lastAt: clearedAt + 1, openedAt: null, freshAt: clearedAt });
     });
   });
 });

@@ -323,7 +323,7 @@ describe("daemon 熔断（firered 装配面）：daemon-failures 跨调用闸住
       try {
         const synth = createFireredSynth(specOf(labDir), fake.host, FAST);
         expect((await synth(REQUEST)).sampleRate).toBe(32000);
-        expect(readCircuitRecord(circuitPathOf(labDir))).toBeNull(); // 温态成功抹掉劣化史：下一次失败从头计
+        expect(readCircuitRecord(circuitPathOf(labDir))?.count).toBe(0); // 温态成功抹掉劣化史：下一次失败从头计
         await daemon.close();
       } finally {
         void fake;
@@ -340,7 +340,7 @@ describe("daemon 熔断（firered 装配面）：daemon-failures 跨调用闸住
       try {
         const synth = createFireredSynth(specOf(labDir), fake.host, FAST);
         expect((await synth(REQUEST)).sampleRate).toBe(32000); // 到期给一次重试机会且成功
-        expect(readCircuitRecord(circuitPathOf(labDir))).toBeNull();
+        expect(readCircuitRecord(circuitPathOf(labDir))?.count).toBe(0);
         await daemon.close();
       } finally {
         void fake;
