@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { GPTSOVITS_WEIGHT_MARKERS, INDEXTTS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
+import { FIRERED_WEIGHT_MARKERS, GPTSOVITS_WEIGHT_MARKERS, INDEXTTS_WEIGHT_MARKERS, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 
 /**
  * 权重指纹的跨语言公式一致性测试（daemon 版本握手的承重墙）。
@@ -16,6 +16,8 @@ import { GPTSOVITS_WEIGHT_MARKERS, INDEXTTS_WEIGHT_MARKERS, weightsFingerprint }
 
 const SHIM = fileURLToPath(new URL("../scripts/shims/gptsovits-shim.py", import.meta.url));
 const INDEXTTS_SHIM = fileURLToPath(new URL("../scripts/shims/indextts-shim.py", import.meta.url));
+const FIRERED_SHIM = fileURLToPath(new URL("../scripts/shims/firered-shim.py", import.meta.url));
+const VOXCPM_SHIM = fileURLToPath(new URL("../scripts/shims/voxcpm-shim.py", import.meta.url));
 
 /** 在临时 lab 根下落一个 marker 文件（size 字节 + 整毫秒 mtime），指纹投影的输入构造。
  * utimes 传秒（浮点可精确表示 1600000000.001 级），落盘 ns 取整后两侧 //1e6 均还原同一毫秒 */
@@ -103,6 +105,60 @@ describe("TS 与 Python shim 的指纹公式对拍（同一 fixture 双实现）
       for (const rel of rest.slice(0, 2)) makeMarker(root, rel, 8, 1700000001000);
       const ts = weightsFingerprint(root, GPTSOVITS_WEIGHT_MARKERS);
       const py = execFileSync("python3", [SHIM, "--print-fingerprint", "--repo", join(root, "GPT-SoVITS")], {
+        encoding: "utf8",
+      }).trim();
+      expect(py).toBe(ts);
+    });
+  });
+});
+
+describe("voxcpm 的 TS 与 Python shim 指纹对拍（S5：同公式、per-engine 投影清单）", () => {
+  it("七件套全在位时两侧摘要一致", () => {
+    withTempLab((root) => {
+      const stamp = 1600000000000;
+      for (const rel of VOXCPM_WEIGHT_MARKERS) makeMarker(root, rel, 0, stamp);
+      const ts = weightsFingerprint(root, VOXCPM_WEIGHT_MARKERS);
+      const py = execFileSync("python3", [VOXCPM_SHIM, "--print-fingerprint", "--models", join(root, "models")], {
+        encoding: "utf8",
+      }).trim();
+      expect(py).toBe(ts);
+    });
+  });
+
+  it("部分 marker 缺席（missing 投影分支）两侧一致", () => {
+    withTempLab((root) => {
+      const [first, ...rest] = VOXCPM_WEIGHT_MARKERS;
+      if (first !== undefined) makeMarker(root, first, 4, 1700000000000);
+      for (const rel of rest.slice(0, 2)) makeMarker(root, rel, 8, 1700000001000);
+      const ts = weightsFingerprint(root, VOXCPM_WEIGHT_MARKERS);
+      const py = execFileSync("python3", [VOXCPM_SHIM, "--print-fingerprint", "--models", join(root, "models")], {
+        encoding: "utf8",
+      }).trim();
+      expect(py).toBe(ts);
+    });
+  });
+});
+
+describe("firered 的 TS 与 Python shim 指纹对拍（S5：同公式、per-engine 投影清单）", () => {
+  it("十一件套全在位时两侧摘要一致", () => {
+    withTempLab((root) => {
+      const stamp = 1600000000000;
+      for (const rel of FIRERED_WEIGHT_MARKERS) makeMarker(root, rel, 0, stamp);
+      const ts = weightsFingerprint(root, FIRERED_WEIGHT_MARKERS);
+      const py = execFileSync("python3", [FIRERED_SHIM, "--print-fingerprint", "--repo", join(root, "FireRedTTS3")], {
+        encoding: "utf8",
+      }).trim();
+      expect(py).toBe(ts);
+    });
+  });
+
+  it("部分 marker 缺席（missing 投影分支）两侧一致", () => {
+    withTempLab((root) => {
+      const [first, ...rest] = FIRERED_WEIGHT_MARKERS;
+      if (first !== undefined) makeMarker(root, first, 4, 1700000000000);
+      for (const rel of rest.slice(0, 3)) makeMarker(root, rel, 8, 1700000001000);
+      const ts = weightsFingerprint(root, FIRERED_WEIGHT_MARKERS);
+      const py = execFileSync("python3", [FIRERED_SHIM, "--print-fingerprint", "--repo", join(root, "FireRedTTS3")], {
         encoding: "utf8",
       }).trim();
       expect(py).toBe(ts);

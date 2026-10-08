@@ -1,10 +1,11 @@
 import { fileURLToPath } from "node:url";
+import { daemonEnabledFromEnv } from "../config.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import type { AudioOut, Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
 import { concatSamples } from "../wav.ts";
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf } from "../voices.ts";
-import { createShimStreamSynth, type VoxcpmLabSpec, type VoxcpmStreamSynth } from "./voxcpm-binding.ts";
+import { createShimStreamSynth, createVoxcpmSynth, type VoxcpmDaemonTuning, type VoxcpmLabSpec, type VoxcpmStreamSynth } from "./voxcpm-binding.ts";
 
 export const VOXCPM_ENGINE = "voxcpm";
 
@@ -85,6 +86,8 @@ export interface VoxcpmEngineOptions {
   shimPath?: string;
   /** 流式合成函数：缺省走真实 shim 会话，测试注入 fake */
   synth?: VoxcpmStreamSynth;
+  /** daemon 计时旋钮覆写（热启动 S5）：真机走缺省，测试收窗与缩短收割窗口 */
+  daemon?: VoxcpmDaemonTuning;
 }
 
 /**
@@ -102,7 +105,11 @@ export function createVoxcpmEngine(options: VoxcpmEngineOptions): EngineAdapter 
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/voxcpm-shim.py", import.meta.url)),
   };
 
-  const streamSynth = options.synth ?? createShimStreamSynth(spec, host);
+  // daemon-first 装配闸（S5，firered/indextts 同形态）：SAY_DAEMON=off 直连 per-call 管道，
+  // 坏值按 on 处理并 stderr 警告——环境层 typo 不该瘫痪出声下限
+  const daemonGate = daemonEnabledFromEnv(host.env);
+  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
+  const streamSynth = options.synth ?? (daemonGate.enabled ? createVoxcpmSynth(spec, host, options.daemon ?? {}) : createShimStreamSynth(spec, host));
 
   /** 一次合成的请求前置形态：default 走 voice creation，角色走零样本克隆 */
   const requirementOf = async (voice: string | null): Promise<{ refAudioPath: string | null; promptText: string | null; control: string | null }> => {
