@@ -74,6 +74,26 @@ export const INDEXTTS_WEIGHT_MARKERS: readonly string[] = [
 ];
 
 /**
+ * FireRed 权重面投影：manifest FIRERED.weights 的 11 件文件级投影（models/FireRedTTS3 十件
+ * + prompts/prompt_2.wav default 嗓参考，与 indextts 把示例参考纳入投影的先例同构）。
+ * 与 shim 侧 WEIGHT_MARKERS 逐条一致，由 test/daemon-fingerprint.test.ts 双实现对拍钉死；
+ * manifest 增删两处同改。firered 无 auto 层（依赖闭包恒空，安装面全量权威），无排除项。
+ */
+export const FIRERED_WEIGHT_MARKERS: readonly string[] = [
+  "models/FireRedTTS3/fireredtts3_base/model.safetensors",
+  "models/FireRedTTS3/fireredtts3_base/config.json",
+  "models/FireRedTTS3/fireredtts3_instruct/model.safetensors",
+  "models/FireRedTTS3/fireredtts3_instruct/config.json",
+  "models/FireRedTTS3/redae/model.safetensors",
+  "models/FireRedTTS3/redae/config.json",
+  "models/FireRedTTS3/campp/campplus_voxceleb.bin",
+  "models/FireRedTTS3/text_tokenizer/tokenizer.json",
+  "models/FireRedTTS3/text_tokenizer/tokenizer_config.json",
+  "models/FireRedTTS3/text_tokenizer/vocab.json",
+  "prompts/prompt_2.wav",
+];
+
+/**
  * 权重指纹：对 marker 清单（rel 路径升序）逐条取 `rel|size|mtime_ms`（stat 失败记 `rel|missing|0`），
  * 换行连接后 sha256 hex。与 Python shim 的同名实现必须逐字节一致——
  * 跨语言公式漂移会让每次握手失败、静默永久降级 per-call，故由对拍测试钉死（daemon-fingerprint.test.ts）。
