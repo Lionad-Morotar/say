@@ -245,6 +245,26 @@ describe("shim --daemon 活体竞态与队列容量（假引擎桩）", () => {
     });
   }, 90_000);
 
+  it("idle 自收割端到端：--idle-minutes 0.01 空载 daemon 自退 exit 0，sock/pid 清净且日志留痕（手动拉起面不许漏常驻残留）", async () => {
+    await withTempLab(async (lab) => {
+      writeStubEngine(lab);
+      // 0.01 分钟 = 0.6s 被 idle_s = max(1.0, …) 钳到 1s，accept 轮询粒度 1s，最迟 ~2s 自退；
+      // 产品面缺省档（15/30/5/15 分钟）无法真等，故用显式低阈走同一条收割代码路径
+      const shim = startShim(lab, ["--idle-minutes", "0.01"]);
+      const sockPath = join(lab, "daemon.sock");
+      try {
+        await waitReadyFrame(sockPath);
+        const { code, signal } = await shim.exit; // 不自退即挂起，由用例级超时兜底
+        expect({ code, signal }).toEqual({ code: 0, signal: null });
+        expect(existsSync(sockPath)).toBe(false);
+        expect(existsSync(join(lab, "daemon.pid"))).toBe(false);
+        expect(readFileSync(join(lab, "daemon.log"), "utf8")).toContain("闲置超过");
+      } finally {
+        shim.proc.kill("SIGTERM"); // 自退成功时为无操作，失败路径防孤儿进程
+      }
+    });
+  }, 30_000);
+
   it("队满拒转 message 跨语言对拍：shim 源内常量与 TS 消费侧逐字一致（漂移即测试红，静默错判成引擎级失败不可接受）", () => {
     const py = readFileSync(SHIM, "utf8");
     const m = /QUEUE_FULL_MESSAGE = "([^"]+)"/.exec(py);
