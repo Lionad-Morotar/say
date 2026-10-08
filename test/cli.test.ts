@@ -160,3 +160,33 @@ describe("engine 管理子命令解析", () => {
     });
   });
 });
+
+describe("daemon 管理子命令解析（热启动 S6）", () => {
+  it("daemon ls 是管理请求", () => {
+    expect(parseArgv(["daemon", "ls"])).toEqual({ kind: "daemon", action: "ls" });
+  });
+
+  it("daemon 裸词是用法错误，指引含 ls 与 stop 两个子命令", () => {
+    const request = parseArgv(["daemon"]);
+    expect(request).toMatchObject({ kind: "usage-error" });
+    if (request.kind === "usage-error") {
+      expect(request.message).toContain("daemon ls");
+      expect(request.message).toContain("daemon stop");
+    }
+  });
+
+  it("识别出 daemon ls 但带多余参数吵闹报错，不静默吞词", () => {
+    expect(parseArgv(["daemon", "ls", "now"])).toMatchObject({ kind: "usage-error" });
+  });
+
+  it("daemon 后跟其他词整句回落文本合成，与 engine 同一兼容纪律", () => {
+    expect(parseArgv(["daemon", "is", "quiet"])).toMatchObject({
+      kind: "speak",
+      texts: ["daemon", "is", "quiet"],
+    });
+    expect(parseArgv(["the", "daemon", "ls"])).toMatchObject({
+      kind: "speak",
+      texts: ["the", "daemon", "ls"],
+    });
+  });
+});

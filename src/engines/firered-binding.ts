@@ -4,7 +4,7 @@ import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
-import { DaemonSession, DaemonUnavailableError, FIRERED_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { DaemonSession, DaemonUnavailableError, FIRERED_WEIGHT_MARKERS, weightsFingerprint, type DaemonVersionKey } from "./daemon-session.ts";
 import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "./gptsovits-binding.ts";
 
@@ -151,7 +151,12 @@ const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.firered;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 240s：20.8GB 权重 + MPS 初始化 +
  *  首跑 kernel 编译余量（调研实测 MPS 冷加载 12s 量级），daemon-session 的全局 120s 默认
  *  会在慢盘误杀加载中的健康进程，再降级 per-call 白付双份冷启动 */
-const DAEMON_READY_TIMEOUT_MS = 240_000;
+export const DAEMON_READY_TIMEOUT_MS = 240_000;
+
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
+export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, FIRERED_WEIGHT_MARKERS) };
+}
 /** 请求 deadline 与 per-call SYNTH_TIMEOUT_MS 同口径 180s：FireRed 长文本引擎内拆句多段串行
  *  是既有注释自证的合成量级上沿（拆句在引擎侧、say 层 chunk 界定不住它），共享层 60s 缺省
  *  会把健康慢合成在途 kill 再从 per-call 整段重放——主路径严于被它替换的退路即「兜底不回退」
@@ -205,11 +210,7 @@ export function createFireredSynth(spec: FireredLabSpec, host: Host, tuning: Fir
       host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--models", spec.modelsDir, "--daemon", "--idle-minutes", String(idleMinutes)], {
         env: { FIRERED_DEVICE: fireredDevice(host.env) },
       }),
-    expectedVersionKey: () => ({
-      protocol: DAEMON_PROTOCOL_VERSION,
-      engineVersion: DAEMON_ENGINE_VERSION,
-      weightsFingerprint: weightsFingerprint(spec.labDir, FIRERED_WEIGHT_MARKERS),
-    }),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
     readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     requestTimeoutMs: tuning.requestTimeoutMs ?? DAEMON_REQUEST_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
@@ -235,6 +236,8 @@ export function createFireredSynth(spec: FireredLabSpec, host: Host, tuning: Fir
         promptLang: "auto",
         textLang: req.textLang,
         speedFactor: 1.0,
+        // caller_pid 归因（S6）：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        callerPid: host.pid,
       }),
     )) {
       const msg = parseLine(line);

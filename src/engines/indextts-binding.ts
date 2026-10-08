@@ -4,7 +4,7 @@ import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
-import { DaemonSession, DaemonUnavailableError, INDEXTTS_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { DaemonSession, DaemonUnavailableError, INDEXTTS_WEIGHT_MARKERS, weightsFingerprint, type DaemonVersionKey } from "./daemon-session.ts";
 import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "./gptsovits-binding.ts";
 
@@ -140,7 +140,12 @@ const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.indextts;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 240s：5GB 权重 + MPS 初始化 + auto 层首跑自拉
  *  余量（实测首跑 76.7s），daemon-session 的全局 120s 默认是 gptsovits 12s 加载的十倍余量、
  *  不覆盖 indextts 首跑形态，误杀加载中的健康进程再降级 per-call 白付双份冷启动 */
-const DAEMON_READY_TIMEOUT_MS = 240_000;
+export const DAEMON_READY_TIMEOUT_MS = 240_000;
+
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
+export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, INDEXTTS_WEIGHT_MARKERS) };
+}
 
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface IndexttsDaemonTuning {
@@ -182,11 +187,7 @@ export function createIndexttsSynth(spec: IndexttsLabSpec, host: Host, tuning: I
         }
       : {}),
     spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--models", spec.modelsDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
-    expectedVersionKey: () => ({
-      protocol: DAEMON_PROTOCOL_VERSION,
-      engineVersion: DAEMON_ENGINE_VERSION,
-      weightsFingerprint: weightsFingerprint(spec.labDir, INDEXTTS_WEIGHT_MARKERS),
-    }),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
     readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
     ...(tuning.requestTimeoutMs !== undefined ? { requestTimeoutMs: tuning.requestTimeoutMs } : {}),
@@ -212,6 +213,8 @@ export function createIndexttsSynth(spec: IndexttsLabSpec, host: Host, tuning: I
         promptLang: "auto",
         textLang: req.textLang,
         speedFactor: 1.0,
+        // caller_pid 归因（S6）：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        callerPid: host.pid,
         ...(req.durationFactor !== undefined ? { durationFactor: req.durationFactor } : {}),
         ...(req.emoAlpha !== undefined ? { emoAlpha: req.emoAlpha } : {}),
       }),

@@ -4,7 +4,7 @@ import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
-import { DaemonSession, DaemonUnavailableError, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { DaemonSession, DaemonUnavailableError, VOXCPM_WEIGHT_MARKERS, weightsFingerprint, type DaemonVersionKey } from "./daemon-session.ts";
 import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "./gptsovits-binding.ts";
 
@@ -151,7 +151,12 @@ const DAEMON_ENGINE_VERSION = "VoxCPM2Model";
 const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.voxcpm;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 180s：from_pretrained + optimize 构造期
  *  warm-up（一次完整合成）的量级，慢盘首跑 torch.compile 余量含在内 */
-const DAEMON_READY_TIMEOUT_MS = 180_000;
+export const DAEMON_READY_TIMEOUT_MS = 180_000;
+
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
+export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, VOXCPM_WEIGHT_MARKERS) };
+}
 /** 请求 deadline 与 per-call IDLE_TIMEOUT_MS 同预算线 180s（R1 原则「主路径不严于退路」的
  *  流式化落点）：daemon 层窗口是整请求绝对制，per-call 是帧间活动制——流式单请求生成总时长
  *  随句长变（42 块/句量级），叠加 daemon 侧最多 4 路排队（每路秒级到十几秒），共享缺省 60s
@@ -205,11 +210,7 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
     // --lab 显式传给 daemon 形态：sock/pid/log 落位与权重指纹的 lab 根不依赖 models 推导
     spawn: (idleMinutes) =>
       host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--models", spec.modelsDir, "--lab", spec.labDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
-    expectedVersionKey: () => ({
-      protocol: DAEMON_PROTOCOL_VERSION,
-      engineVersion: DAEMON_ENGINE_VERSION,
-      weightsFingerprint: weightsFingerprint(spec.labDir, VOXCPM_WEIGHT_MARKERS),
-    }),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
     readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     requestTimeoutMs: tuning.requestTimeoutMs ?? DAEMON_REQUEST_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
@@ -234,6 +235,8 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
         promptLang: "auto",
         textLang: "auto",
         speedFactor: 1.0,
+        // caller_pid 归因（S6）：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        callerPid: host.pid,
         ...(req.control !== null ? { control: req.control } : {}),
       }),
     )) {
