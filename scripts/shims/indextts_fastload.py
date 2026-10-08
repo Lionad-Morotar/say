@@ -81,6 +81,10 @@ def _wrap_codec(cls):
     """EnhancedCodec：meta 包装之外再覆写实例方法 load_checkpoint——
     其原实现把 missing/shape 不符的键以当前值填充（meta 路线下即垃圾）且只 log warning，
     是五个建模面里最静默的一个，闸挂在这里。"""
+    # 幂等标记必须独立于 meta 标记：CodecFastLoad 的继承链中段带 _say_fastload_wrapped，
+    # 复用它会误判「未挂闸」，二次 install 让校验沿 super 链叠层（复读翻倍、装配历史被掩盖）
+    if getattr(cls, "_say_fastload_codec_gate", False):
+        return cls
     Wrapped = _meta_wrapped(cls)
 
     class CodecFastLoad(Wrapped):
@@ -92,6 +96,7 @@ def _wrap_codec(cls):
             _verify_coverage(self, ckpt["model"], "codec")
 
     CodecFastLoad.__name__ = "EnhancedCodec"
+    CodecFastLoad._say_fastload_codec_gate = True
     return CodecFastLoad
 
 
@@ -101,6 +106,9 @@ def _wrap_gpt_loader(orig):
     与 shape 不触碰页数据，gpt.pth 3.3GB 复读实测 0.1s 级。"""
     import torch
 
+    if getattr(orig, "_say_gpt_gate", False):
+        return orig  # 幂等：二次 install 不把闸沿闭包链叠层（复读翻倍）
+
     def fastload_load_checkpoint(model, model_pth):
         configs = orig(model, model_pth)
         ckpt = torch.load(model_pth, map_location="cpu")
@@ -108,6 +116,7 @@ def _wrap_gpt_loader(orig):
         _verify_coverage(model, saved, "gpt")
         return configs
 
+    fastload_load_checkpoint._say_gpt_gate = True
     return fastload_load_checkpoint
 
 
@@ -120,6 +129,9 @@ def _wrap_s2mel_loader(orig):
     校验复刻其消费形态（'module.' 前缀剥离；ignore_modules 跳过；load_ema 的 ema 覆写
     不改键集合，按 params 校验仍成立——引擎调用点 load_ema 恒 False）。"""
     import torch
+
+    if getattr(orig, "_say_s2mel_gate", False):
+        return orig  # 幂等：与 gpt 闸同理，防叠层复读
 
     def fastload_load_checkpoint2(model, optimizer, path, load_only_params=True, ignore_modules=(), is_distributed=False, load_ema=False):
         result = orig(
@@ -137,6 +149,7 @@ def _wrap_s2mel_loader(orig):
             _verify_coverage(model.models[key], _strip_ddp_prefix(params[key]), f"s2mel.{key}")
         return result
 
+    fastload_load_checkpoint2._say_s2mel_gate = True
     return fastload_load_checkpoint2
 
 

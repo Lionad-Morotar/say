@@ -111,6 +111,8 @@ describe("indextts 真合成数值断言（真机门控：fastload 路径整链�
       expect(run.exitCode).toBe(0);
 
       const buf = Buffer.from(String(audio!.pcm), "base64");
+      // 奇数字节 = 帧损坏：必须响亮失败，禁止 Int16Array 静默截断末字节后带缺尾样本继续判
+      expect(buf.byteLength % 2, `pcm 字节数为奇（${buf.byteLength}）：协议帧损坏`).toBe(0);
       const pcm = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
       const sampleRate = Number(audio!.sample_rate); // 协议帧字段为 snake_case（engine-protocol v1）
       expect(sampleRate).toBeGreaterThan(0);

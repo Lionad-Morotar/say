@@ -39,7 +39,7 @@ export const VENV_PYTHON: string | null = (() => {
 /** 真实引擎代码在位（集成面前提：patch 打的属性表来自这份源码） */
 export const ENGINE = VENV_PYTHON !== null && existsSync(join(REPO, "indextts/infer_v2_5.py")) && existsSync(join(CHECKPOINTS, "config.yaml"));
 
-/** 主权重面：九件文件级在场且 gpt.pth 非占位（>1GB 才是票 01 实测量级） */
+/** 主权重面：九件文件级在场且 gpt.pth 非占位 */
 function mainWeightsReady(): boolean {
   const nine = [
     "gpt.pth",
@@ -54,7 +54,10 @@ function mainWeightsReady(): boolean {
   ];
   if (!nine.every((f) => existsSync(join(CHECKPOINTS, f)))) return false;
   try {
-    return statSync(join(CHECKPOINTS, "gpt.pth")).size > 1_000_000_000;
+    // 占位判别阈值取 200MB 而非官方 fp32 量级（3.26GB）：红测夹具空 ckpt 是 KB 级，
+    // 200MB 足以拦截占位，又让半量化等合法重打包形态继续开门——阈值贴着当前存档大小
+    // 会让上游合法变小把真合成守门整组静默 skip 成假绿
+    return statSync(join(CHECKPOINTS, "gpt.pth")).size > 200_000_000;
   } catch {
     return false;
   }
@@ -91,11 +94,13 @@ export interface ShimRunResult {
  */
 export function runShimPerCall(
   requests: Array<Record<string, unknown>>,
-  opts: { modelsDir?: string; timeoutMs: number; extraEnv?: Record<string, string> },
+  opts: { modelsDir?: string; timeoutMs: number; extraEnv?: Record<string, string>; cwd?: string },
 ): Promise<ShimRunResult> {
   const python = VENV_PYTHON as string;
   const proc = spawn(python, [SHIM, "--repo", REPO, "--models", opts.modelsDir ?? CHECKPOINTS], {
     env: { ...process.env, PYTHONPATH: "", ...(opts.extraEnv ?? {}) },
+    // 被测进程运行环境随调用方显式声明：相对路径产物落夹具目录而非仓库工作树
+    cwd: opts.cwd,
   });
   const t0 = performance.now();
   let stdout = "";

@@ -174,6 +174,16 @@ const TOY_DRIVE_PY = [
   "emit('install-applied', info.get('applied') is True, info)",
   "",
   "try:",
+  "    # S0b 同进程二次 install：闸包装类与闸闭包必须原对象返回，不沿继承链/闭包链叠层",
+  "    codec1, gpt1, s2_1 = fake_engine.EnhancedCodec, fake_engine.load_checkpoint, fake_engine.load_checkpoint2",
+  "    info2 = fl.install_fast_load_patch(fake_engine)",
+  "    emit('double-install-idempotent',",
+  "         info2.get('applied') is True and fake_engine.EnhancedCodec is codec1",
+  "         and fake_engine.load_checkpoint is gpt1 and fake_engine.load_checkpoint2 is s2_1, info2)",
+  "except Exception as e:",
+  "    emit('double-install-idempotent', False, f'{type(e).__name__}: {e}')",
+  "",
+  "try:",
   "    # S1 meta 建模生效：构造后参数在真实 CPU 存储（to_empty 物化），非 meta",
   "    m = fake_engine.UnifiedVoice(layers=2, model_dim=8)",
   "    devs = {p.device.type for p in m.parameters()}",
@@ -323,6 +333,7 @@ describe("fastload patch · toy 引擎闸行为（venv 门控）", () => {
       for (const name of [
         "build-atomic-no-pollution",
         "install-applied",
+        "double-install-idempotent",
         "meta-wrap-cpu",
         "gpt-full-pass",
         "gpt-missing-fatal",
@@ -397,7 +408,7 @@ describe("indextts shim · 空权重集成红测（真实引擎代码门控）",
 
         const run = await runShimPerCall(
           [{ id: 1, text: "测试", ref_audio_path: "x", text_lang: "zh" }],
-          { modelsDir: root, timeoutMs: 360_000, extraEnv: { HF_HUB_OFFLINE: "1" } },
+          { modelsDir: root, timeoutMs: 360_000, extraEnv: { HF_HUB_OFFLINE: "1" }, cwd: root },
         );
         const fatal = run.frames.find((f) => f.type === "fatal");
         expect(fatal, `stdout 无 fatal 帧：${run.frames.map((f) => f.type).join(",")}；stderr 尾=${run.stderr.slice(-600)}`).toBeDefined();
