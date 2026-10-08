@@ -80,10 +80,13 @@ def weights_fingerprint(lab_dir: str) -> str:
 def load_engine_with_fastload(repo: str, report) -> object:
     """两形态共享的引擎装载装配：repo 入 sys.path → import 引擎模块 → 装 fastload patch。
 
-    patch 装配自身异常一律回落原始加载（冷启动瘦身是优化，装配故障不得阻断出声——
-    降级面与 --daemon 缺失时的 per-call 兜底同理）；applied 结果经 report 打自报行，
-    落 daemon.log 或 stderr（取证锚点：被测运行时自报，非外部期望）。
-    返回引擎模块对象（IndexTTS2 从其属性取——patch 换的正是这份属性表）。
+    回落面精确为 install 装配窗口：patch 本体异常不阻断出声（回落未打补丁的原始加载）。
+    打补丁后的类在构造期抛异常不在回落面内——回退重试需要还原属性表与全局 torch.load
+    的干净命名空间（Python reload 语义不可靠）；该风险面由钉版安装（uv.lock）+ S4 验收
+    套件（真引擎整构造路径的合成与红测用例）在升级当场拦截，失声形态走三级降级的系统嗓出口。
+    applied 结果经 report 打自报行，落 daemon.log 或 stderr
+    （取证锚点：被测运行时自报，非外部期望）。返回引擎模块对象（IndexTTS2 从其属性取——
+    patch 换的正是这份属性表）。
     """
     repo = os.path.abspath(repo)
     if repo not in sys.path:

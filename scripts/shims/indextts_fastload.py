@@ -59,6 +59,9 @@ def _verify_coverage(model, saved, label):
 
 def _meta_wrapped(cls):
     """randn 建模 → meta 建模 + CPU 空存储物化。load 语义与后续 .to(device) 全部不动。"""
+    if getattr(cls, "_say_fastload_wrapped", False):
+        return cls  # 幂等：重复 install 不对已包装类叠层（双层 meta 无害但掩盖装配历史）
+
     import torch
 
     class FastLoadWrapped(cls):
@@ -70,6 +73,7 @@ def _meta_wrapped(cls):
     FastLoadWrapped.__name__ = cls.__name__
     FastLoadWrapped.__qualname__ = cls.__qualname__
     FastLoadWrapped.__module__ = cls.__module__
+    FastLoadWrapped._say_fastload_wrapped = True
     return FastLoadWrapped
 
 
@@ -170,7 +174,9 @@ def install_fast_load_patch(engine_module) -> dict:
     返回 {"applied": bool, "reason": str|None, "patched": list[str]}——调用方（shim）
     负责把结果打成自报行（取证锚点：被测运行时自报，非外部期望）。
     整体原子：必需属性（五建模/加载面）不齐备即整体不装（not-engine），
-    半装配的引擎行为比没装配更难归因；可选面（bigvgan）在位才装。
+    半装配的引擎行为比没装配更难归因；装配序列 build 先行 apply 收口，
+    构建期异常同样不留半装配态（属性表与全局 torch.load 到 apply 段才被触碰）；
+    可选面（bigvgan）在位才装。
     """
     try:
         import torch  # noqa: F401 — 探测解释器能力，patch 本体全部惰性引用
@@ -180,23 +186,33 @@ def install_fast_load_patch(engine_module) -> dict:
     if not isinstance(engine_module, types.ModuleType) or not all(hasattr(engine_module, a) for a in ENGINE_ATTRS):
         return {"applied": False, "reason": "not-engine", "patched": []}
 
-    patched = []
-    _patch_torch_load()
-    patched.append("torch.load(mmap)")
-
-    engine_module.UnifiedVoice = _meta_wrapped(engine_module.UnifiedVoice)
-    engine_module.MyModel = _meta_wrapped(engine_module.MyModel)
-    engine_module.CAMPPlus = _meta_wrapped(engine_module.CAMPPlus)
-    engine_module.EnhancedCodec = _wrap_codec(engine_module.EnhancedCodec)
-    patched += ["meta:UnifiedVoice", "meta:MyModel", "meta:CAMPPlus", "meta+gate:EnhancedCodec"]
-
-    engine_module.load_checkpoint = _wrap_gpt_loader(engine_module.load_checkpoint)
-    engine_module.load_checkpoint2 = _wrap_s2mel_loader(engine_module.load_checkpoint2)
-    patched += ["gate:gpt", "gate:s2mel"]
-
+    # build 段：纯对象构造、零副作用——中途任何异常都不留半装配态（属性表与全局 torch.load 未触碰）
+    wrapped_classes = {
+        "UnifiedVoice": _meta_wrapped(engine_module.UnifiedVoice),
+        "MyModel": _meta_wrapped(engine_module.MyModel),
+        "CAMPPlus": _meta_wrapped(engine_module.CAMPPlus),
+        "EnhancedCodec": _wrap_codec(engine_module.EnhancedCodec),
+    }
+    wrapped_loaders = {
+        "load_checkpoint": _wrap_gpt_loader(engine_module.load_checkpoint),
+        "load_checkpoint2": _wrap_s2mel_loader(engine_module.load_checkpoint2),
+    }
     bigvgan_mod = getattr(engine_module, "bigvgan", None)
+    bigvgan_wrapped = None
     if bigvgan_mod is not None and getattr(bigvgan_mod, "BigVGAN", None) is not None:
-        bigvgan_mod.BigVGAN = _meta_wrapped(bigvgan_mod.BigVGAN)
-        patched.append("meta:BigVGAN")
+        bigvgan_wrapped = _meta_wrapped(bigvgan_mod.BigVGAN)
 
+    # apply 段：副作用集中执行，全局 torch.load 是最后一步——它之前引擎属性已换完，
+    # 它之后无逻辑，不存在「引擎半包装 + torch.load 未 mmap」的中间态
+    for name, cls in wrapped_classes.items():
+        setattr(engine_module, name, cls)
+    for name, fn in wrapped_loaders.items():
+        setattr(engine_module, name, fn)
+    if bigvgan_wrapped is not None:
+        bigvgan_mod.BigVGAN = bigvgan_wrapped
+    _patch_torch_load()
+
+    patched = ["meta:UnifiedVoice", "meta:MyModel", "meta:CAMPPlus", "meta+gate:EnhancedCodec", "gate:gpt", "gate:s2mel", "torch.load(mmap)"]
+    if bigvgan_wrapped is not None:
+        patched.insert(-1, "meta:BigVGAN")
     return {"applied": True, "reason": None, "patched": patched}

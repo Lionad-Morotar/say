@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { tmpdir, userInfo } from "node:os";
-import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { CHECKPOINTS, ENGINE, SHIMS_DIR, VENV_PYTHON, runShimPerCall } from "./indextts-say-lab.ts";
 
 /**
  * indextts 冷启动瘦身的加载面测试（热启动 S4）：fastload patch（meta 建模 + to_empty +
@@ -22,38 +22,8 @@ import { fileURLToPath } from "node:url";
  * 性能计时（ready ≤12s）不进套件——负载敏感断言必 flaky，走 docs/debug 真机取证轮。
  */
 
-const SHIM = fileURLToPath(new URL("../scripts/shims/indextts-shim.py", import.meta.url));
-const SHIMS_DIR = dirname(SHIM);
-
-/** say-lab 安装面（与 resolveLabPython 三形态一致地做收集期探活，缺位即 skip 不 fail）。
- * 必须走 userInfo().homedir：vitest 配置注入 HOME=/nonexistent-say-test-home（接缝隔离），
- * os.homedir()/HOME 推导在本套件里必然落空——真机面探活读的是系统 passwd 家目录 */
-const LAB = process.env.SAY_LAB_DIR ?? join(userInfo().homedir, ".local/share/say-lab", "indextts");
-const REPO = join(LAB, "index-tts");
-const CHECKPOINTS = join(LAB, "checkpoints");
-
-function findVenvPython(): string | null {
-  for (const rel of ["venv/bin/python", ".venv/bin/python", "index-tts/.venv/bin/python"]) {
-    const p = join(LAB, rel);
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
-/** 收集期探活（env-gate 与可用性解耦教训）：venv 在位且 torch 可 import 才算真机面可用 */
-const VENV_PYTHON = (() => {
-  const py = findVenvPython();
-  if (py === null) return null;
-  try {
-    execFileSync(py, ["-c", "import torch"], { timeout: 120_000, stdio: "pipe" });
-    return py;
-  } catch {
-    return null;
-  }
-})();
+/** 探活与共享原语在 ./indextts-say-lab.ts（收集期一次性，多套件复用） */
 const VENV = VENV_PYTHON !== null;
-/** 真实引擎代码 + config.yaml 在位才有集成面 */
-const ENGINE = VENV && existsSync(join(REPO, "indextts/infer_v2_5.py")) && existsSync(join(CHECKPOINTS, "config.yaml"));
 
 function makeTempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -175,7 +145,30 @@ const TOY_DRIVE_PY = [
   "",
   "results = {}",
   "",
-  "# 每次场景重装：fake_engine 模块属性被 patch 后保留 wrapped 态，跨场景共享是预期形态",
+  "# S0 build 段原子性（先于正常 install 验证全局未被污染）：",
+  "# 必需属性齐备但 UnifiedVoice 是不可继承类型（bool）→ install 在构建期抛 TypeError，",
+  "# 引擎属性表与全局 torch.load 都必须停在未触碰态（审查 finding：装配半程异常不留半装配态）",
+  "bad = types.ModuleType('bad_engine')",
+  "class _Ok:",
+  "    def __init__(self, *a, **k):",
+  "        pass",
+  "def _fn(*a, **k):",
+  "    return {}",
+  "bad.UnifiedVoice = bool",
+  "bad.MyModel = _Ok",
+  "bad.CAMPPlus = _Ok",
+  "bad.EnhancedCodec = _Ok",
+  "bad.load_checkpoint = _fn",
+  "bad.load_checkpoint2 = _fn",
+  "try:",
+  "    fl.install_fast_load_patch(bad)",
+  "    emit('build-atomic-no-pollution', False, 'install 未按预期抛错')",
+  "except TypeError:",
+  "    untouched = bad.UnifiedVoice is bool and bad.MyModel is _Ok and bad.load_checkpoint is _fn",
+  "    clean_load = getattr(torch.load, '_say_fastload_mmap', False) is False",
+  "    emit('build-atomic-no-pollution', untouched and clean_load, f'untouched={untouched} clean_torch_load={clean_load}')",
+  "",
+  "# 正常装配：fake_engine 模块属性被 patch 后保留 wrapped 态，跨场景共享是预期形态",
   "info = fl.install_fast_load_patch(fake_engine)",
   "results['install'] = info",
   "emit('install-applied', info.get('applied') is True, info)",
@@ -328,6 +321,7 @@ describe("fastload patch · toy 引擎闸行为（venv 门控）", () => {
       const cases = runToyDrive();
       const byName = new Map(cases.map((c) => [c.case, c]));
       for (const name of [
+        "build-atomic-no-pollution",
         "install-applied",
         "meta-wrap-cpu",
         "gpt-full-pass",
@@ -401,38 +395,18 @@ describe("indextts shim · 空权重集成红测（真实引擎代码门控）",
           "torch.save({'model': {}}, os.path.join(os.environ['FIXTURE_ROOT'], 'gpt.pth'))",
         ].join("\n"));
 
-        const proc = spawn(VENV_PYTHON as string, [SHIM, "--repo", REPO, "--models", root], {
-          env: { ...process.env, HF_HUB_OFFLINE: "1", PYTHONPATH: "" },
-          cwd: root,
-        });
-        proc.stdin.write(JSON.stringify({ id: 1, text: "测试", ref_audio_path: "x", text_lang: "zh" }) + "\n");
-        proc.stdin.end();
-
-        let stdout = "";
-        let stderr = "";
-        proc.stdout.on("data", (d) => (stdout += d.toString()));
-        proc.stderr.on("data", (d) => (stderr += d.toString()));
-        const code = await new Promise<number | null>((resolve, reject) => {
-          proc.on("error", reject);
-          proc.on("close", (c) => resolve(c));
-          setTimeout(() => {
-            proc.kill("SIGKILL");
-            reject(new Error("shim 360s 未退出（空权重本应快速 fatal）"));
-          }, 360_000);
-        });
-
-        const frames = stdout
-          .split("\n")
-          .filter((l) => l.startsWith("{"))
-          .map((l) => JSON.parse(l) as Record<string, unknown>);
-        const fatal = frames.find((f) => f.type === "fatal");
-        expect(fatal, `stdout 无 fatal 帧：${frames.map((f) => f.type).join(",")}；stderr 尾部=${stderr.slice(-600)}`).toBeDefined();
+        const run = await runShimPerCall(
+          [{ id: 1, text: "测试", ref_audio_path: "x", text_lang: "zh" }],
+          { modelsDir: root, timeoutMs: 360_000, extraEnv: { HF_HUB_OFFLINE: "1" } },
+        );
+        const fatal = run.frames.find((f) => f.type === "fatal");
+        expect(fatal, `stdout 无 fatal 帧：${run.frames.map((f) => f.type).join(",")}；stderr 尾=${run.stderr.slice(-600)}`).toBeDefined();
         expect(String(fatal!.message), "fatal 消息应含闸归因").toMatch(/fastload/i);
         expect(String(fatal!.message)).toMatch(/missing/i);
         // 取证锚点规范：patch 生效以被测运行时自报行为准，不信外部期望
-        expect(stderr, "stderr 应有 fastload 装配自报行").toMatch(/\[fastload\]/);
+        expect(run.stderr, "stderr 应有 fastload 装配自报行").toMatch(/\[fastload\] applied=True/);
         // 协议面形态：fatal 后进程退出码 1（per-call 既有契约）
-        expect(code).toBe(1);
+        expect(run.exitCode).toBe(1);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
