@@ -6,6 +6,7 @@ import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf
 import { wpmToSpeed } from "./sherpa.ts";
 import { createGptsovitsSynth, createShimSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
 import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const GPTSOVITS_ENGINE = "gptsovits";
 
@@ -200,9 +201,16 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
       for (const w of r.warnings) host.writeStderr(`${w}\n`);
       return { enabled: r.enabled, idleMinutes: r.idleMinutes };
     })();
-  const synth =
-    options.synth ??
-    (gate.enabled ? createGptsovitsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes }) : createShimSynth(spec, host));
+  let synth: GptsovitsSynth;
+  if (options.synth !== undefined) {
+    synth = options.synth;
+  } else if (gate.enabled) {
+    synth = createGptsovitsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: GPTSOVITS_ENGINE });
+  } else {
+    // 门关也要留痕：SAY_DEBUG daemon 段据此区分「off 未装配」与「试过又掉了」
+    recordDaemonForm(GPTSOVITS_ENGINE, "off");
+    synth = createShimSynth(spec, host);
+  }
 
   /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义）。
    * ja 无中性参考资产（随仓只备 zh/en），参考降级取 default-zh 而 text_lang 独立按 ja 条件化——

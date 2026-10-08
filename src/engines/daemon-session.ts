@@ -173,6 +173,13 @@ export interface DaemonSessionOptions {
    * 缺席则纯内存 sticky，跨进程闸由上层装配决定开不开。
    */
   circuit?: CircuitHandle;
+  /**
+   * 形态观测面（SAY_DEBUG daemon 段的数据源）：established 在握手通过、连接落定时发出
+   * （warm=直连在位 daemon；cold=本调用 spawn 等加载，coldMs 为轮内实付时长）；
+   * cooldown 在熔断直拒时发出。只报终局事实不报尝试噪音——失败路径由调用方
+   * 按 DaemonUnavailableError 归 per-call，形态语义不在此双写。
+   */
+  observe?: (event: { kind: "established"; form: "warm" | "cold"; coldMs: number } | { kind: "cooldown" }) => void;
 }
 
 /** 四个计时旋钮的落定形态：缺省值集中一处，注入值供测试收窗 */
@@ -241,6 +248,7 @@ export class DaemonSession {
     // 冷却闸只拦「新建立」：已有活连接照常复用（开窗后在途请求该出多少声出多少声）。
     // 直拒不走 markUnavailable：冷却跳过不是新的劣化证据，也不该污染 sticky
     if (this.opts.circuit !== undefined && isCircuitOpen(this.opts.circuit)) {
+      this.opts.observe?.({ kind: "cooldown" });
       throw new DaemonUnavailableError(`${this.opts.label} 常驻形态熔断冷却中（近期连续失败），本次直接走 per-call`);
     }
     if (this.establishing !== null) {
@@ -396,7 +404,10 @@ export class DaemonSession {
         const expected = this.opts.expectedVersionKey();
         const got = outcome.info;
         if (got.protocol === expected.protocol && got.engineVersion === expected.engineVersion && got.weightsFingerprint === expected.weightsFingerprint) {
-          this.settleSocket(socket, spawnedNow && !loserMode && this.spawnedProcAlive, got.pid);
+          const owned = spawnedNow && !loserMode && this.spawnedProcAlive;
+          this.settleSocket(socket, owned, got.pid);
+          // 输家语义归 warm：等的是他人的加载，本调用没付冷启动
+          this.opts.observe?.({ kind: "established", form: owned ? "cold" : "warm", coldMs: Date.now() - roundStart });
           return;
         }
         // 不符也要记下对端自述 pid：kill 归属核对对「拒收的 ready」同样适用

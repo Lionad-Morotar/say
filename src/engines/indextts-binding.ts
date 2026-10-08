@@ -1,4 +1,5 @@
-import { BUILTIN_DAEMON_IDLE } from "../config.ts";
+import { BUILTIN_DAEMON_IDLE, type DaemonEngine } from "../config.ts";
+import { recordDaemonForm, type DaemonForm } from "../daemon-trace.ts";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -144,6 +145,8 @@ const DAEMON_READY_TIMEOUT_MS = 240_000;
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface IndexttsDaemonTuning {
   idleMinutes?: number;
+  /** SAY_DEBUG daemon 段记账键：装配点（引擎工厂）注入；缺席 = 不记账 */
+  traceEngine?: DaemonEngine;
   readyTimeoutMs?: number;
   warmTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -162,12 +165,22 @@ export interface IndexttsDaemonTuning {
 export function createIndexttsSynth(spec: IndexttsLabSpec, host: Host, tuning: IndexttsDaemonTuning = {}): IndexttsSynth {
   // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
   const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
+  // SAY_DEBUG daemon 段记账：traceEngine 缺席 = 不记账（测试直装配不污染进程单例）
+  const record = (form: DaemonForm, coldMs: number | null = null): void => {
+    if (tuning.traceEngine !== undefined) recordDaemonForm(tuning.traceEngine, form, coldMs);
+  };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
     circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
+    ...(tuning.traceEngine !== undefined
+      ? {
+          observe: (event: { kind: "established"; form: "warm" | "cold"; coldMs: number } | { kind: "cooldown" }) =>
+            event.kind === "established" ? record(event.form, event.coldMs) : record("cooldown"),
+        }
+      : {}),
     spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--models", spec.modelsDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
     expectedVersionKey: () => ({
       protocol: DAEMON_PROTOCOL_VERSION,
@@ -233,6 +246,7 @@ export function createIndexttsSynth(spec: IndexttsLabSpec, host: Host, tuning: I
       return await runViaDaemon(req, id);
     } catch (error) {
       if (!(error instanceof DaemonUnavailableError)) throw error;
+      record("per-call");
       if (shimSynth === null) shimSynth = createShimSynth(spec, host);
       return shimSynth(req);
     }

@@ -6,6 +6,7 @@ import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf
 import { createFireredSynth, createShimSynth, type FireredDaemonTuning, type FireredLabSpec, type FireredSynth } from "./firered-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
 import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const FIRERED_ENGINE = "firered";
 
@@ -121,9 +122,16 @@ export function createFireredEngine(options: FireredEngineOptions): EngineAdapte
       for (const w of r.warnings) host.writeStderr(`${w}\n`);
       return { enabled: r.enabled, idleMinutes: r.idleMinutes };
     })();
-  const synth =
-    options.synth ??
-    (gate.enabled ? createFireredSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes }) : createShimSynth(spec, host));
+  let synth: FireredSynth;
+  if (options.synth !== undefined) {
+    synth = options.synth;
+  } else if (gate.enabled) {
+    synth = createFireredSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: FIRERED_ENGINE });
+  } else {
+    // 门关也要留痕：SAY_DEBUG daemon 段据此区分「off 未装配」与「试过又掉了」
+    recordDaemonForm(FIRERED_ENGINE, "off");
+    synth = createShimSynth(spec, host);
+  }
 
   /** default 嗓参考：v1 官方 prompt_2（manifest prompts/ 条目分发），转写与音频同源钉死 */
   const defaultRequirement = (): { audioPath: string; promptText: string } => ({

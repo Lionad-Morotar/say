@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { createDefaultRegistry } from "../src/engines/index.ts";
 import { GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
+import { daemonFormOf, resetDaemonTrace } from "../src/daemon-trace.ts";
 import type { ConfigFile } from "../src/types.ts";
 import { createFakeHost, type FakeDaemonHandle } from "./fake-host.ts";
 import { readyFrame, startFakeDaemon, type FakeDaemon } from "./daemon-fakes.ts";
@@ -77,7 +78,10 @@ async function speakThroughRegistry(fake: ReturnType<typeof createFakeHost>, dae
 }
 
 describe("createDefaultRegistry daemon 接线（config 层在真链路生效）", () => {
-  it("daemonFile enabled=false 关门：健康 daemon 在位也不连，直接 per-call", async () => {
+  // daemon-trace 是进程级单例：warm/cold 为终态会挡住后续用例记账，逐用例起点归零
+  beforeEach(() => resetDaemonTrace());
+
+  it("daemonFile enabled=false 关门：健康 daemon 在位也不连，直接 per-call，门关留 off 痕", async () => {
     await withTempDataHome(async (dataDir, labDir, fp) => {
       const daemon = await startFakeDaemon(join(labDir, "daemon.sock"), { ready: readyFrame({ weights_fingerprint: fp }) });
       const fake = makePerCallCapableHost({ files: engineFiles, env: { XDG_DATA_HOME: dataDir } });
@@ -87,6 +91,7 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
         expect(daemon.connects).toBe(0);
         expect(fake.daemons).toHaveLength(1);
         expect(fake.daemons[0]!.args).not.toContain("--daemon");
+        expect(daemonFormOf("gptsovits")).toEqual({ form: "off", coldMs: null });
       } finally {
         await daemon.close();
       }
@@ -115,6 +120,7 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
         const out = await speakThroughRegistry(fake, { daemon: { enabled: false } });
         expect(out.sampleRate).toBe(32000);
         expect(fake.daemons).toHaveLength(0);
+        expect(daemonFormOf("gptsovits")).toEqual({ form: "warm", coldMs: null });
       } finally {
         await daemon.close();
       }
@@ -129,6 +135,7 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
         const out = await speakThroughRegistry(fake, null);
         expect(out.sampleRate).toBe(32000);
         expect(fake.daemons).toHaveLength(0);
+        expect(daemonFormOf("gptsovits")).toEqual({ form: "warm", coldMs: null });
         expect(fake.stderr.join("")).toBe(""); // 无坏值不该有任何警告噪音
       } finally {
         await daemon.close();
@@ -157,9 +164,41 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
         const daemonSpawn = fake.daemons.find((record) => record.args.includes("--daemon"))!;
         const idx = daemonSpawn.args.indexOf("--idle-minutes");
         expect(daemonSpawn.args[idx + 1]).toBe("3"); // config [daemon.idle] 胜出自内置表 15
+        // 本调用 spawn 且非输家 → cold 形态，携加载窗耗时
+        const coldTrace = daemonFormOf("gptsovits");
+        expect(coldTrace?.form).toBe("cold");
+        expect(coldTrace?.coldMs).toBeTypeOf("number");
       } finally {
         if (daemonRef.up !== null) await (await daemonRef.up).close();
       }
+    });
+  });
+
+  it("daemon 拉起即败（SPAWN_ERROR）：退 per-call 出声并记 per-call 形态", async () => {
+    await withTempDataHome(async (dataDir, _labDir, _fp) => {
+      const fake = createFakeHost({
+        env: { HOME: "/h", XDG_DATA_HOME: dataDir },
+        files: engineFiles,
+        daemonFactory: (record) => {
+          if (record.args.includes("--daemon")) return null; // 拉起即刻 SPAWN_ERROR 收敛，不等加载窗
+          const output = new PassThrough();
+          output.write('{"type":"ready","engine":"gptsovits","version":"v2","device":"cpu"}\n');
+          return {
+            output,
+            errors: new PassThrough(),
+            onRequest: (line: string, handle: FakeDaemonHandle) => {
+              const id = (JSON.parse(line) as { id: number }).id;
+              const pcm = Buffer.alloc(2);
+              pcm.writeInt16LE(8192);
+              handle.output.write(`${JSON.stringify({ type: "audio", id, pcm: pcm.toString("base64"), sample_rate: 24000, done: true })}\n`);
+            },
+          };
+        },
+      });
+      const out = await speakThroughRegistry(fake, null); // 三层全缺席 = daemon-first，试了但掉回 per-call
+      expect(out.sampleRate).toBe(24000);
+      expect(fake.daemons[0]!.args).toContain("--daemon"); // 首选形态确实是常驻 daemon
+      expect(daemonFormOf("gptsovits")).toEqual({ form: "per-call", coldMs: null });
     });
   });
 
@@ -170,6 +209,7 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
       try {
         const out = await speakThroughRegistry(fake, { daemon: { enabled: false } });
         expect(out.sampleRate).toBe(24000); // 非法 env 跳层，config 的 false 生效
+        expect(daemonFormOf("gptsovits")).toEqual({ form: "off", coldMs: null });
         const hits = fake.stderr.filter((line) => line.includes("SAY_DAEMON"));
         expect(hits).toHaveLength(1); // 旧形态逐引擎各打一份，四引擎刷四行同文
       } finally {

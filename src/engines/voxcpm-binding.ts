@@ -1,4 +1,5 @@
-import { BUILTIN_DAEMON_IDLE } from "../config.ts";
+import { BUILTIN_DAEMON_IDLE, type DaemonEngine } from "../config.ts";
+import { recordDaemonForm, type DaemonForm } from "../daemon-trace.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -161,6 +162,8 @@ const DAEMON_REQUEST_TIMEOUT_MS = 180_000;
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface VoxcpmDaemonTuning {
   idleMinutes?: number;
+  /** SAY_DEBUG daemon 段记账键：装配点（引擎工厂）注入；缺席 = 不记账 */
+  traceEngine?: DaemonEngine;
   readyTimeoutMs?: number;
   warmTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -183,12 +186,22 @@ export interface VoxcpmDaemonTuning {
 export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: VoxcpmDaemonTuning = {}): VoxcpmStreamSynth {
   // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
   const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
+  // SAY_DEBUG daemon 段记账：traceEngine 缺席 = 不记账（测试直装配不污染进程单例）
+  const record = (form: DaemonForm, coldMs: number | null = null): void => {
+    if (tuning.traceEngine !== undefined) recordDaemonForm(tuning.traceEngine, form, coldMs);
+  };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
     circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
+    ...(tuning.traceEngine !== undefined
+      ? {
+          observe: (event: { kind: "established"; form: "warm" | "cold"; coldMs: number } | { kind: "cooldown" }) =>
+            event.kind === "established" ? record(event.form, event.coldMs) : record("cooldown"),
+        }
+      : {}),
     // --lab 显式传给 daemon 形态：sock/pid/log 落位与权重指纹的 lab 根不依赖 models 推导
     spawn: (idleMinutes) =>
       host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--models", spec.modelsDir, "--lab", spec.labDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
@@ -271,6 +284,7 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
             // 引擎级失败抛出，外层回退链按「本次引擎不出声」收敛（say 的 system 嗓兜底）
             throw new EngineError(`${ENGINE_LABEL} 常驻形态在途断连且已有音频帧交付，不可重放：${messageOf(error)}`);
           }
+          record("per-call");
           if (shimSynth === null) shimSynth = createShimStreamSynth(spec, host);
           yield* shimSynth(req);
         }

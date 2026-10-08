@@ -1,3 +1,4 @@
+import { daemonFormOf } from "./daemon-trace.ts";
 import type { Timing } from "./delivery.ts";
 import type { Host } from "./host.ts";
 import type { ResolvedConfig } from "./types.ts";
@@ -23,7 +24,25 @@ export function fail(host: Host, message: string): number {
   return EXIT_FAILURE;
 }
 
-/** SAY_DEBUG=1 的一行时序摘要：走没走回退、分了几块、时间花在合成还是播放，一行看全 */
+/**
+ * SAY_DEBUG daemon 段（热启动 S6）：把 daemon-trace 记的形态拼进摘要。
+ * 词表 warm|cold(Xs)|per-call|cooldown|off 按蓝图票 06 钉死。
+ * 非 daemon 引擎（sherpa/system/zipvoice）无记账，整段省略——不写 daemon=n/a，
+ * 让 grep daemon= 天然只命中四 shim-daemon 引擎的调用。
+ * cold 的 Xs = 本调用实付加载窗（秒，一位小数），其余形态不带耗时。
+ */
+function daemonSegment(engineName: string): string {
+  const trace = daemonFormOf(engineName);
+  if (trace === null) return "";
+  if (trace.form === "cold") {
+    // 半进位走整数域：6.35 存成 6.3499…，直接 (ms/1000).toFixed(1) 会系统性舍出 6.3
+    const secs = (Math.round((trace.coldMs ?? 0) / 100) / 10).toFixed(1);
+    return ` daemon=cold(${secs}s)`;
+  }
+  return ` daemon=${trace.form}`;
+}
+
+/** SAY_DEBUG=1 的一行时序摘要：走没走回退、分了几块、daemon 什么形态、时间花在合成还是播放，一行看全 */
 export function writeDebug(
   host: Host,
   config: ResolvedConfig,
@@ -35,7 +54,7 @@ export function writeDebug(
   if (!config.debug) return;
   const total = Math.round(host.now() - timing.started);
   host.writeStderr(
-    `say: debug: engine=${outcome.engineName} voice=${voice ?? "default"} chunks=${chunks} ` +
+    `say: debug: engine=${outcome.engineName}${daemonSegment(outcome.engineName)} voice=${voice ?? "default"} chunks=${chunks} ` +
       `synth=${Math.round(timing.synth)}ms play=${Math.round(timing.play)}ms total=${total}ms\n`,
   );
 }

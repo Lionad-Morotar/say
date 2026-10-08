@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import type { AudioOut, Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
@@ -117,9 +118,16 @@ export function createVoxcpmEngine(options: VoxcpmEngineOptions): EngineAdapter 
       for (const w of r.warnings) host.writeStderr(`${w}\n`);
       return { enabled: r.enabled, idleMinutes: r.idleMinutes };
     })();
-  const streamSynth =
-    options.synth ??
-    (gate.enabled ? createVoxcpmSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes }) : createShimStreamSynth(spec, host));
+  let streamSynth: VoxcpmStreamSynth;
+  if (options.synth !== undefined) {
+    streamSynth = options.synth;
+  } else if (gate.enabled) {
+    streamSynth = createVoxcpmSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: VOXCPM_ENGINE });
+  } else {
+    // 门关也要留痕：SAY_DEBUG daemon 段据此区分「off 未装配」与「试过又掉了」
+    recordDaemonForm(VOXCPM_ENGINE, "off");
+    streamSynth = createShimStreamSynth(spec, host);
+  }
 
   /** 一次合成的请求前置形态：default 走 voice creation，角色走零样本克隆 */
   const requirementOf = async (voice: string | null): Promise<{ refAudioPath: string | null; promptText: string | null; control: string | null }> => {

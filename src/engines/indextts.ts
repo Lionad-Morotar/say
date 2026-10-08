@@ -7,6 +7,7 @@ import { wpmToSpeed } from "./sherpa.ts";
 import { createIndexttsSynth, createShimSynth, type IndexttsDaemonTuning, type IndexttsLabSpec, type IndexttsSynth } from "./indextts-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
 import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const INDEXTTS_ENGINE = "indextts";
 
@@ -118,9 +119,15 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
       for (const w of r.warnings) host.writeStderr(`${w}\n`);
       return { enabled: r.enabled, idleMinutes: r.idleMinutes };
     })();
-  const synth =
-    options.synth ??
-    (gate.enabled ? createIndexttsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes }) : createShimSynth(spec, host));
+  let synth: IndexttsSynth;
+  if (options.synth !== undefined) {
+    synth = options.synth;
+  } else if (gate.enabled) {
+    synth = createIndexttsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: INDEXTTS_ENGINE });
+  } else {
+    recordDaemonForm(INDEXTTS_ENGINE, "off");
+    synth = createShimSynth(spec, host);
+  }
 
   /** default 嗓参考：引擎仓自带示例（随 repo 克隆分发） */
   const defaultRefPath = (): string => `${spec.repoDir}/${DEFAULT_VOICE_REPO_REL}`;
