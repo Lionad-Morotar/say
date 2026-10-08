@@ -82,8 +82,8 @@
 ## 测试覆盖缺口
 
 **scripts/lib 的 node:test 用例不在 pnpm test 内**
-- `package.json` scripts 只有 `vitest run`；`scripts/lib/pipeline.test.mjs`、`verify.test.mjs` 用 node:test 编写且 vitest include 仅 `test/**/*.test.ts`——跑全量单测不会触及它们，需手动 `node --test scripts/lib/`
-- 风险：采集/校验管线的回归（ffmpeg 参数、角色包校验）可能被漏跑；修复方向是给 package.json 加一个 `node --test scripts/lib/` 的 script 或并入 test 链
+- `package.json` scripts 只有 `vitest run`；`scripts/lib/pipeline.test.mjs`、`verify.test.mjs` 用 node:test 编写且 vitest include 仅 `test/**/*.test.ts`——跑全量单测不会触及它们，需手动 `node --test scripts/lib/*.test.mjs`
+- 风险：采集/校验管线的回归（ffmpeg 参数、角色包校验）可能被漏跑；修复方向是给 package.json 加一个 `node --test scripts/lib/*.test.mjs` 的 script（显式文件形态：`--test` 传目录在 Node 22 按模块解析报错）或并入 test 链
 
 **无独立测试文件的源码**
 - `src/index.ts`（main 组装）、`src/report.ts`、`src/errors.ts`、`src/executor.ts`（daemon 分支）、`src/engines/*-binding.ts`（native 绑定层，设计上由 bench 证据链与部署冒烟覆盖）

@@ -25,6 +25,12 @@ export interface GptsovitsRequest {
   durationFactor?: number;
   /** 情感强度预留（S5 起，IndexTTS 语义域 0-1）：需与引擎侧情感参考配对才生效，一期 adapter 不发送 */
   emoAlpha?: number;
+  /**
+   * 调用方进程 pid（daemon 形态注入）：id 是调用方进程内计数器，
+   * 多 CLI 进程并发共用一个 daemon 时请求号各自起排必撞车，daemon.log 完成行无从归因。
+   * per-call 形态一进程一会话无此歧义不必带；shim 字段读取全走 .get 容缺面，旧 daemon 忽略陌生键。
+   */
+  callerPid?: number;
 }
 
 /** 就绪消息：模型加载完成的握手信号（冷启动 ~12s 后到达） */
@@ -73,6 +79,7 @@ export function encodeRequest(req: GptsovitsRequest): string {
     ...(req.control !== undefined ? { control: req.control } : {}),
     ...(req.durationFactor !== undefined ? { duration_factor: req.durationFactor } : {}),
     ...(req.emoAlpha !== undefined ? { emo_alpha: req.emoAlpha } : {}),
+    ...(req.callerPid !== undefined ? { caller_pid: req.callerPid } : {}),
   })}\n`;
 }
 

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { daemonEnabledFromEnv } from "../config.ts";
+import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import type { AudioOut, Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
@@ -86,8 +87,10 @@ export interface VoxcpmEngineOptions {
   shimPath?: string;
   /** 流式合成函数：缺省走真实 shim 会话，测试注入 fake */
   synth?: VoxcpmStreamSynth;
-  /** daemon 计时旋钮覆写（热启动 S5）：真机走缺省，测试收窗与缩短收割窗口 */
+  /** daemon 计时旋钮覆写（热启动）：真机走缺省，测试收窗与缩短收割窗口 */
   daemon?: VoxcpmDaemonTuning;
+  /** 接线层（main）注入的三层解析投影；缺省 env-only 回退——与 daemon 上线前接线等价 */
+  daemonSettings?: DaemonEngineSettings;
 }
 
 /**
@@ -105,11 +108,26 @@ export function createVoxcpmEngine(options: VoxcpmEngineOptions): EngineAdapter 
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/voxcpm-shim.py", import.meta.url)),
   };
 
-  // daemon-first 装配闸（S5，firered/indextts 同形态）：SAY_DAEMON=off 直连 per-call 管道，
-  // 坏值按 on 处理并 stderr 警告——环境层 typo 不该瘫痪出声下限
-  const daemonGate = daemonEnabledFromEnv(host.env);
-  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
-  const streamSynth = options.synth ?? (daemonGate.enabled ? createVoxcpmSynth(spec, host, options.daemon ?? {}) : createShimStreamSynth(spec, host));
+  // 逃生门在装配点落闸：off 直连 per-call 管道，合成面退回 daemon 上线前的单形态——
+  // 门是形态选择，不是失败降级。三层输入（内置 < config < env）：接线层注入 daemonSettings，
+  // 测试与直接装配走 env-only 回退
+  const gate =
+    options.daemonSettings ??
+    (() => {
+      const r = daemonForEngine({ env: host.env, file: null, engine: VOXCPM_ENGINE });
+      for (const w of r.warnings) host.writeStderr(`${w}\n`);
+      return { enabled: r.enabled, idleMinutes: r.idleMinutes };
+    })();
+  let streamSynth: VoxcpmStreamSynth;
+  if (options.synth !== undefined) {
+    streamSynth = options.synth;
+  } else if (gate.enabled) {
+    streamSynth = createVoxcpmSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: VOXCPM_ENGINE });
+  } else {
+    // 门关也要留痕：SAY_DEBUG daemon 段据此区分「off 未装配」与「试过又掉了」
+    recordDaemonForm(VOXCPM_ENGINE, "off");
+    streamSynth = createShimStreamSynth(spec, host);
+  }
 
   /** 一次合成的请求前置形态：default 走 voice creation，角色走零样本克隆 */
   const requirementOf = async (voice: string | null): Promise<{ refAudioPath: string | null; promptText: string | null; control: string | null }> => {

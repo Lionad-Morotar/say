@@ -19,6 +19,8 @@
 | 常驻（daemon） | 跨 CLI 调用保活的引擎服务进程，权重与设备初始化留在内存中持续服役；与 per-call（一次调用一个 shim 进程）相对 | server、service |
 | 温态（warm）/ 冷启动（cold） | 温态指权重已在内存、请求直达推理；冷启动指从零到可推理的全过程（spawn、import、权重加载、设备初始化） | hot、loaded |
 | 闲置收割（idle reap） | daemon 持续无请求达阈值后自行退出归还内存，下次调用重新冷启动 | timeout kill |
+| 注册点（registration points） | say-lab 引擎目录下的 daemon.sock / daemon.pid / daemon.log 三件：sock 在位即可发现常驻，ls 六态判定与 stop 双通道触达全部以此为根据 | lock 文件、registry |
+| 熔断冷却（cooldown） | daemon 基础设施失败连击达阈后拒触达直走 per-call 的窗口期，期满自动恢复触达；SAY_DEBUG daemon 段词表之一 | breaker open、熔断中 |
 | 出声即 exit 0 | 回退语义的验收锚点：只要用户听到了声音，进程就必须成功退出 | silent success |
 
 ## 架构决策记录

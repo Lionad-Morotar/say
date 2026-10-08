@@ -33,6 +33,21 @@ describe("encodeRequest", () => {
     });
   });
 
+  it("caller_pid 是 daemon 形态的可选归因键：给了才写，per-call 不给就不出现在帧里", () => {
+    const base: Omit<GptsovitsRequest, "id"> = {
+      text: "hi",
+      refAudioPath: "/r.wav",
+      promptText: "",
+      promptLang: "auto",
+      textLang: "auto",
+      speedFactor: 1,
+    };
+    const withPid = JSON.parse(encodeRequest({ ...base, id: 1, callerPid: 4242 })) as Record<string, unknown>;
+    expect(withPid.caller_pid).toBe(4242);
+    const withoutPid = JSON.parse(encodeRequest({ ...base, id: 1 })) as Record<string, unknown>;
+    expect("caller_pid" in withoutPid).toBe(false);
+  });
+
   it("文本含换行时整体仍是一帧：换行被 JSON 转义，不产生协议串扰", () => {
     const line = encodeRequest({
       id: 1,

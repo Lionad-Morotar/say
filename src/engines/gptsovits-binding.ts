@@ -1,8 +1,10 @@
+import { BUILTIN_DAEMON_IDLE, type DaemonEngine } from "../config.ts";
+import { recordDaemonForm, type DaemonForm } from "../daemon-trace.ts";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
-import { DaemonSession, DaemonUnavailableError, GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { DaemonSession, DaemonUnavailableError, GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint, type DaemonVersionKey } from "./daemon-session.ts";
 import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 
 /** say-lab 引擎安装面（路径判据与 scripts/lib/engine-status.mjs 同构） */
@@ -122,12 +124,21 @@ const DAEMON_ENGINE_VERSION = "v2";
  * 与 shim 的 QUEUE_FULL_MESSAGE 由源文本对拍测试钉死（shim-daemon.test.ts）。
  */
 export const DAEMON_QUEUE_FULL_MESSAGE = "daemon queue full";
-/** 闲置收割阈值（分钟）：burst 期间常驻保热、久置回收内存；由 shim daemon 自计时自退 */
-const DAEMON_IDLE_MINUTES = 15;
+/** 闲置收割缺省档：单源在 config 内置表（逐引擎裁决值），[daemon] 配置层经装配点覆盖；由 shim daemon 自计时自退 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.gptsovits;
+/** 加载窗显式钉住（与 daemon-session 全局缺省同值）：say daemon ls 的「加载中」判定与握手预算共用同一数 */
+export const DAEMON_READY_TIMEOUT_MS = 120_000;
+
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
+export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, GPTSOVITS_WEIGHT_MARKERS) };
+}
 
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface GptsovitsDaemonTuning {
   idleMinutes?: number;
+  /** SAY_DEBUG daemon 段记账键：装配点（引擎工厂）注入；缺席 = 不记账，测试直装配不受进程单例污染 */
+  traceEngine?: DaemonEngine;
   readyTimeoutMs?: number;
   warmTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -146,19 +157,25 @@ export interface GptsovitsDaemonTuning {
 export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning: GptsovitsDaemonTuning = {}): GptsovitsSynth {
   // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
   const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
+  // SAY_DEBUG daemon 段记账：traceEngine 缺席 = 不记账（测试直装配不污染进程单例）
+  const record = (form: DaemonForm, coldMs: number | null = null): void => {
+    if (tuning.traceEngine !== undefined) recordDaemonForm(tuning.traceEngine, form, coldMs);
+  };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
     circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
+    ...(tuning.traceEngine !== undefined
+      ? {
+          observe: (event: { kind: "established"; form: "warm" | "cold"; coldMs: number } | { kind: "cooldown" }) =>
+            event.kind === "established" ? record(event.form, event.coldMs) : record("cooldown"),
+        }
+      : {}),
     spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
-    expectedVersionKey: () => ({
-      protocol: DAEMON_PROTOCOL_VERSION,
-      engineVersion: DAEMON_ENGINE_VERSION,
-      weightsFingerprint: weightsFingerprint(spec.labDir, GPTSOVITS_WEIGHT_MARKERS),
-    }),
-    ...(tuning.readyTimeoutMs !== undefined ? { readyTimeoutMs: tuning.readyTimeoutMs } : {}),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
+    readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
     ...(tuning.requestTimeoutMs !== undefined ? { requestTimeoutMs: tuning.requestTimeoutMs } : {}),
     ...(tuning.pollIntervalMs !== undefined ? { pollIntervalMs: tuning.pollIntervalMs } : {}),
@@ -172,7 +189,8 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
   const runViaDaemon = async (req: GptsovitsSynthRequest, id: number): Promise<GptsovitsSynthResult> => {
     const chunks: Float32Array[] = [];
     let sampleRate: number | null = null;
-    for await (const line of session.request(encodeRequest({ ...req, id }))) {
+    // caller_pid 归因：daemon.log 的完成行在多 CLI 进程并发共号时仍可指认发起者
+    for await (const line of session.request(encodeRequest({ ...req, id, callerPid: host.pid }))) {
       const msg = parseLine(line);
       if (msg === null) continue; // 杂散行（引擎库噪音进 socket 的既有形态）：丢弃面与 per-call 一致
       if (msg.type === "fatal") throw new EngineError(`${ENGINE_LABEL} 引擎致命错误：${msg.message}`);
@@ -205,6 +223,7 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
       return await runViaDaemon(req, id);
     } catch (error) {
       if (!(error instanceof DaemonUnavailableError)) throw error;
+      record("per-call");
       if (shimSynth === null) shimSynth = createShimSynth(spec, host);
       return shimSynth(req);
     }

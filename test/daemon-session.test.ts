@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DaemonSession, DaemonUnavailableError, type DaemonSessionOptions } from "../src/engines/daemon-session.ts";
+import { recordCircuitFailure } from "../src/engines/daemon-circuit.ts";
 import type { DaemonProcess } from "../src/host.ts";
 import { readyFrame, startFakeDaemon, type FakeDaemon } from "./daemon-fakes.ts";
 
@@ -517,6 +518,68 @@ describe("DaemonSession.request：在途传输与失败收敛", () => {
       expect(await dummy.expectKilled()).toBe("SIGKILL");
     } finally {
       await h.cleanup();
+    }
+  });
+});
+
+describe("DaemonSession.observe：SAY_DEBUG 形态观测事件", () => {
+  type ObserveEvent = Parameters<NonNullable<DaemonSessionOptions["observe"]>>[0];
+
+  it("warm 直连命中：established warm 事件恰一次，不带 spawn", async () => {
+    const events: ObserveEvent[] = [];
+    const h = new Harness({ observe: (event) => events.push(event) });
+    try {
+      h.track(await startFakeDaemon(h.sockPath));
+      await h.session.ensure();
+      expect(events).toEqual([{ kind: "established", form: "warm", coldMs: expect.any(Number) }]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("lazy 拉起加载窗命中：established cold 携加载窗耗时", async () => {
+    const events: ObserveEvent[] = [];
+    const h = new Harness({ observe: (event) => events.push(event), idleMinutes: 7 });
+    try {
+      h.spawnHooks.push(() => {
+        void sleep(40).then(async () => h.track(await startFakeDaemon(h.sockPath)));
+      });
+      await h.session.ensure();
+      expect(h.spawns).toHaveLength(1);
+      expect(events).toEqual([{ kind: "established", form: "cold", coldMs: expect.any(Number) }]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("输家转连赢家：归属让渡后仍是 warm（本调用没付加载）", async () => {
+    const events: ObserveEvent[] = [];
+    const h = new Harness({ observe: (event) => events.push(event) });
+    try {
+      // spawn 返回 exit 3：探针判负「他人在位」，随后赢家 sock 可连
+      h.spawnHooks.push((proc) => {
+        setTimeout(() => proc.settle(3, null), 20);
+        void sleep(40).then(async () => h.track(await startFakeDaemon(h.sockPath)));
+      });
+      await h.session.ensure();
+      expect(events).toEqual([{ kind: "established", form: "warm", coldMs: expect.any(Number) }]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("熔断开启直拒：cooldown 事件先于抛出，不进 establish", async () => {
+    const events: ObserveEvent[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "say-circ-"));
+    const h = new Harness({ observe: (event) => events.push(event), circuit: { path: join(dir, "daemon-failures"), now: () => 0 } });
+    try {
+      for (let i = 0; i < 3; i++) recordCircuitFailure({ path: join(dir, "daemon-failures"), now: () => 0 });
+      await expect(h.session.ensure()).rejects.toBeInstanceOf(DaemonUnavailableError);
+      expect(events).toEqual([{ kind: "cooldown" }]);
+      expect(h.spawns).toHaveLength(0); // 冷却直拒不触拉起源
+    } finally {
+      await h.cleanup();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

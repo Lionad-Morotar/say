@@ -100,6 +100,8 @@ export interface ConfigFile {
   preset?: unknown;
   /** `[presets.<name>]` 分节原样：音色×语速×引擎组合表，类型校验在 resolveConfig */
   presets?: unknown;
+  /** `[daemon]` 分节原样（enabled/idle_minutes/[daemon.idle]），类型校验在 resolveDaemonConfig */
+  daemon?: unknown;
 }
 
 export interface FlagOverrides {

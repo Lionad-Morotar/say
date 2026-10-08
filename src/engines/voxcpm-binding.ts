@@ -1,8 +1,10 @@
+import { BUILTIN_DAEMON_IDLE, type DaemonEngine } from "../config.ts";
+import { recordDaemonForm, type DaemonForm } from "../daemon-trace.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
 import { awaitShimReady, sessionDeadline, spawnShimSession, setSessionActive, terminatedSessionError, type ShimSession } from "./shim-session.ts";
-import { DaemonSession, DaemonUnavailableError, VOXCPM_WEIGHT_MARKERS, weightsFingerprint } from "./daemon-session.ts";
+import { DaemonSession, DaemonUnavailableError, VOXCPM_WEIGHT_MARKERS, weightsFingerprint, type DaemonVersionKey } from "./daemon-session.ts";
 import { clearCircuitFailures, type CircuitHandle } from "./daemon-circuit.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "./gptsovits-binding.ts";
 
@@ -144,11 +146,17 @@ export function createShimStreamSynth(spec: VoxcpmLabSpec, host: Host): VoxcpmSt
  *  代际变更必同时击穿指纹，双路自兜（决策台账 D2 取证） */
 const DAEMON_PROTOCOL_VERSION = "2";
 const DAEMON_ENGINE_VERSION = "VoxCPM2Model";
-/** 闲置收割阈值（分钟）：票 03 per-engine 表钉 voxcpm=15（4.6GB 档，burst 间隔容忍度高于 firered） */
-const DAEMON_IDLE_MINUTES = 15;
+/** 闲置收割缺省档：voxcpm 4.6GB 档取默认档（burst 间隔容忍度高于 firered 的 5 分钟档），
+ *  单源在 config 内置表，[daemon] 配置层经装配点覆盖 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.voxcpm;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 180s：from_pretrained + optimize 构造期
  *  warm-up（一次完整合成）的量级，慢盘首跑 torch.compile 余量含在内 */
-const DAEMON_READY_TIMEOUT_MS = 180_000;
+export const DAEMON_READY_TIMEOUT_MS = 180_000;
+
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
+export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, VOXCPM_WEIGHT_MARKERS) };
+}
 /** 请求 deadline 与 per-call IDLE_TIMEOUT_MS 同预算线 180s（R1 原则「主路径不严于退路」的
  *  流式化落点）：daemon 层窗口是整请求绝对制，per-call 是帧间活动制——流式单请求生成总时长
  *  随句长变（42 块/句量级），叠加 daemon 侧最多 4 路排队（每路秒级到十几秒），共享缺省 60s
@@ -159,6 +167,8 @@ const DAEMON_REQUEST_TIMEOUT_MS = 180_000;
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface VoxcpmDaemonTuning {
   idleMinutes?: number;
+  /** SAY_DEBUG daemon 段记账键：装配点（引擎工厂）注入；缺席 = 不记账 */
+  traceEngine?: DaemonEngine;
   readyTimeoutMs?: number;
   warmTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -181,20 +191,26 @@ export interface VoxcpmDaemonTuning {
 export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: VoxcpmDaemonTuning = {}): VoxcpmStreamSynth {
   // 熔断句柄跨 CLI 进程经文件会合：now 走 Host 注入（测试推进假时钟免真等）
   const circuit: CircuitHandle = { path: `${spec.labDir}/daemon-failures`, now: () => host.now() };
+  // SAY_DEBUG daemon 段记账：traceEngine 缺席 = 不记账（测试直装配不污染进程单例）
+  const record = (form: DaemonForm, coldMs: number | null = null): void => {
+    if (tuning.traceEngine !== undefined) recordDaemonForm(tuning.traceEngine, form, coldMs);
+  };
   const session = new DaemonSession({
     label: ENGINE_LABEL,
     socketPath: `${spec.labDir}/daemon.sock`,
     pidPath: `${spec.labDir}/daemon.pid`,
     circuit,
     idleMinutes: tuning.idleMinutes ?? DAEMON_IDLE_MINUTES,
+    ...(tuning.traceEngine !== undefined
+      ? {
+          observe: (event: { kind: "established"; form: "warm" | "cold"; coldMs: number } | { kind: "cooldown" }) =>
+            event.kind === "established" ? record(event.form, event.coldMs) : record("cooldown"),
+        }
+      : {}),
     // --lab 显式传给 daemon 形态：sock/pid/log 落位与权重指纹的 lab 根不依赖 models 推导
     spawn: (idleMinutes) =>
       host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--models", spec.modelsDir, "--lab", spec.labDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
-    expectedVersionKey: () => ({
-      protocol: DAEMON_PROTOCOL_VERSION,
-      engineVersion: DAEMON_ENGINE_VERSION,
-      weightsFingerprint: weightsFingerprint(spec.labDir, VOXCPM_WEIGHT_MARKERS),
-    }),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
     readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     requestTimeoutMs: tuning.requestTimeoutMs ?? DAEMON_REQUEST_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
@@ -219,6 +235,8 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
         promptLang: "auto",
         textLang: "auto",
         speedFactor: 1.0,
+        // caller_pid 归因：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        callerPid: host.pid,
         ...(req.control !== null ? { control: req.control } : {}),
       }),
     )) {
@@ -269,6 +287,7 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
             // 引擎级失败抛出，外层回退链按「本次引擎不出声」收敛（say 的 system 嗓兜底）
             throw new EngineError(`${ENGINE_LABEL} 常驻形态在途断连且已有音频帧交付，不可重放：${messageOf(error)}`);
           }
+          record("per-call");
           if (shimSynth === null) shimSynth = createShimStreamSynth(spec, host);
           yield* shimSynth(req);
         }

@@ -1,8 +1,10 @@
+import { parseConfigFile } from "./config.ts";
 import { createDefaultRegistry } from "./engines/index.ts";
-import { createNodeHost, SYSTEM_SAY_BIN } from "./host.ts";
+import { createNodeHost, SYSTEM_SAY_BIN, type Host } from "./host.ts";
 import { resolvePaths } from "./paths.ts";
 import { run } from "./speak.ts";
 import type { RunDeps } from "./deps.ts";
+import type { ConfigFile } from "./types.ts";
 
 export { parseArgv, type CliRequest } from "./cli.ts";
 export {
@@ -61,13 +63,28 @@ export { withStderrMuted } from "./stderr.ts";
 export type * from "./types.ts";
 export { concatSamples, encodeWav } from "./wav.ts";
 
+/**
+ * daemon 接线层的 config 层输入：读盘只为喂 [daemon] 三层解析，坏了静默回落 env/内置两层。
+ * 坏文件的归因不在这里打——run() 编排层会照常警告，同一次调用双份刷屏比单点静默更吵。
+ */
+async function readDaemonConfigFile(host: Host, configFile: string): Promise<ConfigFile | null> {
+  if (!host.fileExists(configFile)) return null;
+  try {
+    const parsed = parseConfigFile(await host.readFileText(configFile));
+    return parsed.ok ? parsed.value : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 组装真实依赖并执行一次调用，返回进程退出码 */
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const host = createNodeHost();
+  const paths = resolvePaths(host.env);
   const deps: RunDeps = {
     host,
-    paths: resolvePaths(host.env),
-    registry: createDefaultRegistry(host),
+    paths,
+    registry: createDefaultRegistry(host, { daemonFile: await readDaemonConfigFile(host, paths.configFile) }),
     sayBin: SYSTEM_SAY_BIN,
   };
   return run(argv, deps);

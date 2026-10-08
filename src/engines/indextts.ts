@@ -6,7 +6,8 @@ import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, type CloneVo
 import { wpmToSpeed } from "./sherpa.ts";
 import { createIndexttsSynth, createShimSynth, type IndexttsDaemonTuning, type IndexttsLabSpec, type IndexttsSynth } from "./indextts-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
-import { daemonEnabledFromEnv } from "../config.ts";
+import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const INDEXTTS_ENGINE = "indextts";
 
@@ -88,6 +89,8 @@ export interface IndexttsEngineOptions {
   synth?: IndexttsSynth;
   /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
   daemon?: IndexttsDaemonTuning;
+  /** 接线层（main）注入的三层解析投影；缺省 env-only 回退——与 daemon 上线前接线等价 */
+  daemonSettings?: DaemonEngineSettings;
 }
 
 /**
@@ -106,11 +109,25 @@ export function createIndexttsEngine(options: IndexttsEngineOptions): EngineAdap
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/indextts-shim.py", import.meta.url)),
   };
 
-  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
-  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
-  const daemonGate = daemonEnabledFromEnv(host.env);
-  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
-  const synth = options.synth ?? (daemonGate.enabled ? createIndexttsSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
+  // 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），合成面退回
+  // daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级。
+  // 三层输入（内置 < config < env）：接线层注入 daemonSettings，测试与直接装配走 env-only 回退
+  const gate =
+    options.daemonSettings ??
+    (() => {
+      const r = daemonForEngine({ env: host.env, file: null, engine: INDEXTTS_ENGINE });
+      for (const w of r.warnings) host.writeStderr(`${w}\n`);
+      return { enabled: r.enabled, idleMinutes: r.idleMinutes };
+    })();
+  let synth: IndexttsSynth;
+  if (options.synth !== undefined) {
+    synth = options.synth;
+  } else if (gate.enabled) {
+    synth = createIndexttsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: INDEXTTS_ENGINE });
+  } else {
+    recordDaemonForm(INDEXTTS_ENGINE, "off");
+    synth = createShimSynth(spec, host);
+  }
 
   /** default 嗓参考：引擎仓自带示例（随 repo 克隆分发） */
   const defaultRefPath = (): string => `${spec.repoDir}/${DEFAULT_VOICE_REPO_REL}`;

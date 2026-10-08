@@ -19,6 +19,10 @@ export type CliRequest =
     }
   /** 引擎管理子命令（say engine ls/use），编排层经注册表与 say-lab 安装状态执行 */
   | { kind: "engine"; action: "ls" | "use"; name: string | null }
+  /** 常驻 daemon 管理子命令（say daemon ls/stop）：ls 只读探测注册点；
+   *  stop 目标是引擎名或 "all"（无参与 --all 同义），合法性校验归编排层 */
+  | { kind: "daemon"; action: "ls" }
+  | { kind: "daemon"; action: "stop"; target: string }
   | { kind: "passthrough"; argv: string[] }
   | { kind: "usage-error"; message: string };
 
@@ -71,6 +75,21 @@ export function parseArgv(argv: readonly string[]): CliRequest {
         return { kind: "usage-error", message: "engine use 需要恰好一个引擎名：say engine use <name>" };
       }
       return { kind: "engine", action: "use", name: third };
+    }
+  }
+  // daemon 管理子命令与 engine 同一精确形态纪律（热启动）：
+  // 动词在、形态不齐吵闹报用法错误；daemon 后跟其他词（`say daemon is quiet`）整句回落文本朗读
+  if (head === "daemon") {
+    if (second === undefined) {
+      return { kind: "usage-error", message: "daemon 需要子命令：say daemon ls 或 say daemon stop <engine|--all>" };
+    }
+    if (second === "ls") {
+      if (third !== undefined) return { kind: "usage-error", message: "daemon ls 不接受额外参数" };
+      return { kind: "daemon", action: "ls" };
+    }
+    if (second === "stop") {
+      if (fourth !== undefined) return { kind: "usage-error", message: "daemon stop 不接受额外参数" };
+      return { kind: "daemon", action: "stop", target: third === undefined || third === "--all" ? "all" : third };
     }
   }
 

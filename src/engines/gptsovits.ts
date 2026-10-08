@@ -5,7 +5,8 @@ import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../ty
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
 import { createGptsovitsSynth, createShimSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
-import { daemonEnabledFromEnv } from "../config.ts";
+import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const GPTSOVITS_ENGINE = "gptsovits";
 
@@ -51,6 +52,8 @@ export interface GptsovitsEngineOptions {
   synth?: GptsovitsSynth;
   /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
   daemon?: GptsovitsDaemonTuning;
+  /** 接线层（main）注入的三层解析投影；缺省 env-only 回退——与 daemon 上线前接线等价 */
+  daemonSettings?: DaemonEngineSettings;
 }
 
 /**
@@ -188,11 +191,26 @@ export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAd
   };
   const defaultVoiceDir = options.defaultVoiceDir ?? fileURLToPath(new URL("../../assets/engines/gptsovits", import.meta.url));
 
-  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
-  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
-  const daemonGate = daemonEnabledFromEnv(host.env);
-  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
-  const synth = options.synth ?? (daemonGate.enabled ? createGptsovitsSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
+  // 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），合成面退回
+  // daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级。
+  // 三层输入（内置 < config < env）：接线层注入 daemonSettings，测试与直接装配走 env-only 回退
+  const gate =
+    options.daemonSettings ??
+    (() => {
+      const r = daemonForEngine({ env: host.env, file: null, engine: GPTSOVITS_ENGINE });
+      for (const w of r.warnings) host.writeStderr(`${w}\n`);
+      return { enabled: r.enabled, idleMinutes: r.idleMinutes };
+    })();
+  let synth: GptsovitsSynth;
+  if (options.synth !== undefined) {
+    synth = options.synth;
+  } else if (gate.enabled) {
+    synth = createGptsovitsSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes, traceEngine: GPTSOVITS_ENGINE });
+  } else {
+    // 门关也要留痕：SAY_DEBUG daemon 段据此区分「off 未装配」与「试过又掉了」
+    recordDaemonForm(GPTSOVITS_ENGINE, "off");
+    synth = createShimSynth(spec, host);
+  }
 
   /** default 嗓参考对：wav 与配套 txt（转写必须与音频内容严格对应，同角色目录的 ref 语义）。
    * ja 无中性参考资产（随仓只备 zh/en），参考降级取 default-zh 而 text_lang 独立按 ja 条件化——

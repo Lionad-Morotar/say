@@ -41,6 +41,9 @@ SAY_ENGINE=firered say "english take"  # 会话级指定
 - `-v <音色|角色>`、`-r <wpm>`（默认 175，macOS say 同锚点）、`-o <文件>`、`-f <文件>`、`--preset <名>`
 - 未支持参数（`--progress`、音频格式族、`-a` 等长尾）整条透传 `/usr/bin/say`，原样继承退出码
 - 任何引擎失败回退系统嗓并写一行 `say: fallback: <原因>`，出声即 exit 0；`SAY_FALLBACK=off` 可关闭
+- `say daemon ls`：常驻引擎状态表（warm/loading/stale/unreachable/idle/zombie 六态，含 pid、运行时长、RSS）；只读探测，不 kill 不拉起
+- `say daemon stop [engine|--all]`：停机双通道（shutdown 帧 + SIGTERM），按引擎等优雅退场窗，超窗升 SIGKILL 并清残留注册点；无常驻也 exit 0（幂等）
+- `engine`/`daemon` 后跟其他词（`say daemon is quiet`）整句回落文本朗读，管理面不收窄兼容承诺
 
 ## 配置
 
@@ -58,9 +61,17 @@ preset = "zh"            # 启动预设（locale 自动默认，一般无需手�
 [presets.en]             # 内置：en 链（firered 内置女声参考）/ zh 链（indextts + frieren-zh）/ ja 链（gptsovits + frieren）
 voice = "default"
 engine = "firered"
+
+[daemon]                 # 常驻形态（热启动）：跨调用复用已加载模型，温态合成省掉整个冷启动
+enabled = true           # 缺省 true；坏值跳层不劫持低层
+idle_minutes = 20        # 全局闲置收割阈，覆盖内置分引擎表
+[daemon.idle]            # 分引擎覆盖：只写想改的
+firered = 5              # 内置表：gptsovits 15 / indextts 30 / firered 5 / voxcpm 15（分钟）
 ```
 
-环境变量：`SAY_ENGINE` / `SAY_VOICE` / `SAY_SPEED` / `SAY_PRESET` / `SAY_FALLBACK` / `SAY_DEBUG=1`（一行时序摘要到 stderr）。
+常驻开关的优先级没有 flag 层，实际链是 `SAY_DAEMON` env > config `[daemon]` > 内置缺省（on）。
+
+环境变量：`SAY_ENGINE` / `SAY_VOICE` / `SAY_SPEED` / `SAY_PRESET` / `SAY_FALLBACK` / `SAY_DEBUG=1`（一行时序摘要到 stderr）/ `SAY_DAEMON=on|off`（常驻总开关，其余取值告警并跳过本层）。
 
 ## 引擎与音色
 
@@ -93,7 +104,8 @@ engine = "firered"
 ## 故障排查
 
 - stderr 有 `say: fallback:`：按原因行处理。最常见是模型资产缺失——`node scripts/install-models.mjs --verify` 审计，缺了就重跑安装脚本（断点续传自愈）
-- `SAY_DEBUG=1` 看一行摘要：走没走回退、分了几块、时间花在哪
+- `SAY_DEBUG=1` 看一行摘要：走没走回退、分了几块、时间花在哪；摘要行带 daemon 段，形态词表 `warm`（经常驻出音）/ `cold(Xs)`（本次调用拉起 daemon，X 是加载耗时）/ `per-call`（daemon 不可用退独立进程）/ `cooldown`（连续失败熔断冷却中）/ `off`（配置或 env 显式关闭）
+- 常驻异常先看 `say daemon ls`：`stale`（引擎升级/重装后旧 daemon 握手失效）与 `unreachable`（残 file/僵死）都不必手动处理，下次合成自动 kill 重拉或 unlink 重 bind；要立即清场就 `say daemon stop --all`。daemon 自持日志在 `~/.local/share/say-lab/<engine>/daemon.log`，完成行带「来自 pid」调用归因
 - 完全无声但 exit 0：检查音量与 afplay；写盘模式用 `say -o /tmp/t.wav "x"` 后 `afinfo /tmp/t.wav` 验时长与格式
 - 换嗓没生效：越界音色名会被引擎静默回落 sid 0（native 层行为），先 `-v ?` 确认名字在表内
 - 资产体积对不上：上游 Releases 不可变，字节不符即残缺，删除对应目录后重跑安装脚本

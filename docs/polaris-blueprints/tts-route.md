@@ -1,4 +1,4 @@
-# epic 蓝图：tts-route（状态：定稿 v5，engine-v2 回写修订 D10/F3/F4）
+# epic 蓝图：tts-route（状态：定稿 v6，warm-start 落地回写 F2 分档锚点）
 
 > 迷雾型 epic 蓝图。目标：为「好听的 agent 说话体验」钉死技术路线与切片清单，替代 macOS `say`。
 > 方向由用户原话指定（路线偏好：drop-in alias > 现成 CLI > 套壳自建 > 从头自研），本次选向无发散（如实记录，见决策日志 D1）。
@@ -25,7 +25,7 @@ s-bench 本机实测（2026-09-19，M3，每格 3 次取中位，64 格矩阵，
 * sherpa-zipvoice 占位干音克隆（node）：en/zh 短句热 2.43-2.57s PASS——**克隆嗓进默认延迟预算成立**；en-long FAIL
 * mlx-qwen3（子进程）：en-short 热 2.88s PASS、zh-short 热 3.67s MARGINAL、en-long 热 9.12s FAIL；安装体量 1.9GB
 * 可行性矩阵六格：kokoro/ZipVoice 双通道（Node 绑定 + spawn）4/4 可用；matcha 2/4（英文退化）；ZipVoice Node 绑定支持成立（静态类型 + 动态合成双证据）
-* 长文本（~60 词）全部本地通道热态超标 → v1 处置 = 规范化层分块 + 流水播放（首包 <3s），F2 daemon 已触发但延后（见雾区）
+* 长文本（~60 词）全部本地通道热态超标 → v1 处置 = 规范化层分块 + 流水播放（首包 <3s），F2 daemon 已触发（后续已由 warm-start epic 落地，见文末雾区条目）
 
 调研关键事实（详表见两份报告）：
 
@@ -198,7 +198,8 @@ say/
 ## 遗留与雾区
 
 * F1 系统 Enhanced/Premium 音色：GUI 手动下载（两种入口说法待验），触发条件 = 用户试听基线样本后想对比，或全线失败时的零代码保底
-* F2 守护进程/warm daemon 模式：执行器三态接口已预留（D9），触发只增实现。**s-bench 已正式触发条件**（kokoro en-long 冷 11.1s、zipvoice en-long 冷 15.2s 均 >10s；spawn 通道热态全线 >3s）——但 v1 处置为「规范化层分块 + 顺序合成流水播放」：agent 主场景是短句（hot 1.6-2.6s 达标），长文本经分块后首包出声 <3s，体验目标即可达成；daemon 延后至分块流水仍不满足体验时实施（gensay daemon 与 sherpa 官方 server 建议为设计参照），实施时 kokoro/zipvoice 的 spawn 热态超标格全部转 PASS 预期
+* F2 守护进程/warm daemon 模式：**已落地（warm-start epic S1-S6，2026-10-08）**。s-bench 触发条件成立后的正式实施：四 shim 引擎（gptsovits/indextts/firered/voxcpm）转 per-engine unix socket 常驻——lazy 拉起、bind 原子竞态仲裁、ready 版本键握手（协议+引擎+权重指纹，引擎升级后旧 daemon 自动 kill 重拉）、闲置收割分引擎（15/30/5/15 分钟），三级降级链 daemon→per-call→system 出声下限不回退。用户面收口：`say daemon ls` 六态只读探测、`say daemon stop` 停机双通道、`[daemon]` 配置节 + `SAY_DAEMON` env 三层优先级、SAY_DEBUG daemon 段词表（warm|cold(Xs)|per-call|cooldown|off）
+* F2 延迟锚点分档回写（整调用温态，验收口径出票 05，引用绝对值必须标负载窗）：gptsovits ≤4s，实测 2.46-3.09s **PASS**；indextts ≤10s，实测 5.1-6.3s **PASS**（burst 冷 36.1s 整串只付一次）；firered ≤8s，load1 151 病态窗最低 14.54s（daemon/off 对照 −68%，机制成立），绝对值待静窗复测定档（立票 09）；voxcpm ≤5s，load1 89 病态窗最低 5.42s（对照 −85%~-88%，同上待复测）。per-call 冷路径同步受益：indextts fastload 整调用 29.4s→15.1s（−49%）。sherpa 宿主（kokoro/zipvoice）走进程内形态不经 daemon 面，其 spawn 热态超标格仍由分块流水处置覆盖
 * F3 克隆质量升级——GPT-SoVITS 少样本微调：**已开启（engine-v2 S1-S9 落地，2026-10-07）**——GPT-SoVITS 已全接线为默认引擎，角色资产（ref.wav/ref.txt/meta.json）一比一映射，微调全链自动化（打标管线三环节真跑 PASS）使本地微调从雾区变为现实路径；触发条件不变（角色相似度用户试听不认可），触发即增量——训练管线独立于 shim 交付面、不进 say 主仓，部署形态不再跃迁（api_v2 常驻形态已就位）
 * F4 情绪表现力引擎（IndexTTS-2.5 / Qwen3-TTS 情绪面）：**已开启（engine-v2 落地，2026-10-07）**——IndexTTS 2.5 已接线为可切换引擎，emo_alpha 情感面预留、duration_factor 语速参数透出（-r 映射），情绪能力从雾区项变为 config 一行即可启用的现成面；触发条件不变（语气预设 D5 被用户判定不够），另 Qwen3-TTS 情绪面维持观察（mlx-qwen3 参照系不接线）
 * F5 云预设（ElevenLabs 角色克隆 / edge-tts / sag）：触发条件 = 用户明确要求质量天花板且接受联网/付费，作为 config 可选 engine 接入；亦为 D14 降级出口的升级选项之一

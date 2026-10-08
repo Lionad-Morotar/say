@@ -90,6 +90,8 @@ describe("createGptsovitsSynth：daemon-first 分流", () => {
         expect(req.text).toBe("你好，Lionad");
         expect(req.ref_audio_path).toBe("/voices/frieren/ref.wav");
         expect(req.speed_factor).toBe(1.0);
+        // daemon 形态帧带调用方 pid：多 CLI 进程共号时 daemon.log 完成行可指认发起者
+        expect(req.caller_pid).toBe(fake.host.pid);
         expect(fake.daemons).toHaveLength(0);
       } finally {
         await daemon.close();

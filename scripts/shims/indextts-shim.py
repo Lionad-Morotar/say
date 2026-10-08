@@ -197,6 +197,9 @@ def serve_daemon(args) -> int:
             stop_flag.set()
             return
         req_id = req.get("id", -1)
+        # caller_pid 归因：id 是调用方进程内计数器，多 CLI 进程并发共号时完成行靠它指认发起者
+        caller_pid = req.get("caller_pid")
+        req_tag = f"请求 {req_id}" + (f"（来自 pid {caller_pid}）" if caller_pid is not None else "")
         model = engine_info["model"]
         import numpy as np  # 模块级缓存 import：零成本
         started = time.monotonic()
@@ -228,7 +231,7 @@ def serve_daemon(args) -> int:
                 "sample_rate": int(sample_rate),
                 "done": True,
             })
-            log(f"请求 {req_id} 完成，耗时 {time.monotonic() - started:.2f}s")
+            log(f"{req_tag} 完成，耗时 {time.monotonic() - started:.2f}s")
         except KeyError as e:
             send_frame(client, {"type": "error", "id": req_id, "message": f"missing request field: {e}"})
         except Exception as e:  # noqa: BLE001 — 单请求失败按 error 回报，daemon 保持存活
