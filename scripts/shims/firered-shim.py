@@ -90,7 +90,9 @@ def weights_fingerprint(lab_dir: str) -> str:
 
 def resolve_lab_dir(args) -> str:
     """say-lab 引擎目录：--lab 显式值优先，缺省按 repo 父目录推导（labDir/FireRedTTS3 安装形态）。"""
-    return os.path.abspath(args.lab) if args.lab else os.path.dirname(os.path.abspath(args.repo))
+    if args.lab:
+        return os.path.abspath(args.lab)
+    return os.path.dirname(os.path.abspath(args.repo))
 
 
 def load_engine(repo: str, models: str):
@@ -402,7 +404,7 @@ def serve_daemon(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="FireRedTTS3 say shim")
-    parser.add_argument("--repo", required=True, help="FireRedTTS3 仓库根（fireredtts3 包以仓库形态在 sys.path 定位）")
+    parser.add_argument("--repo", default=None, help="FireRedTTS3 仓库根（fireredtts3 包以仓库形态在 sys.path 定位）；per-call/daemon 形态必带，print-fingerprint 带 --lab 即可免")
     parser.add_argument("--models", default=None, help="pretrained_model_dir（fireredtts3_base 等子目录的父目录）；per-call/daemon 形态必带，print-fingerprint 不需要")
     parser.add_argument("--lab", default=None, help="say-lab 引擎目录（daemon 形态 sock/pid/log 与权重指纹落点）；缺省按 repo 父目录推导")
     parser.add_argument("--print-fingerprint", action="store_true", help="只打印权重指纹并退出（排障与公式对拍用，不触引擎 import）")
@@ -410,9 +412,15 @@ def main() -> int:
     parser.add_argument("--idle-minutes", type=float, default=5.0, help="daemon 闲置收割阈值（分钟），无请求无连接超阈即自退（票 03：firered 档 5）")
     args = parser.parse_args()
 
+    # 形态级参数校验（print-fingerprint 排障面不被合成参数绑架——lab 或 repo 其一可定位投影根）
     if args.print_fingerprint:
+        if not args.lab and not args.repo:
+            parser.error("--print-fingerprint 需要 --lab 或 --repo 其一以定位 say-lab 引擎目录")
         print(weights_fingerprint(resolve_lab_dir(args)))
         return 0
+
+    if not args.repo:
+        parser.error("--repo 必填（per-call 与 daemon 形态都需要仓库根定位 fireredtts3 包）")
 
     if args.daemon:
         if args.models is None:
