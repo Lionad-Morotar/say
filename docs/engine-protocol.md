@@ -95,7 +95,11 @@ daemon 常驻形态的 ready 额外携带**握手版本键**（per-call 形态�
 - **SAY_DAEMON 逃生门**：`off` = 装配点根本不接 daemon 会话，合成退回 per-call 单形态（健康 daemon 在位也不连，与 daemon 上线前行为同形），off 不是失败、不进熔断；`on`/缺席/空串 = daemon-first 缺省；其它值按 on 处理并 stderr 警告（环境层坏值降级哲学：一个 typo 不该砍掉出声下限）。`[daemon]` 配置节与 flag>env>config 完整优先级归后续切片。
 - **收尾**：Node 关闭 stdin（EOF）即 shim 优雅退出；SIGTERM/SIGKILL 同样终止。无显式握手关停协议。
 - **并发与排队**：请求可并发下发，shim 侧单飞串行处理（推理本身串行），响应按完成序回、`id` 配对（`id` 为连接内序号，非全局唯一，daemon.log 归因时注意）。Node 侧实现（gptsovits/indextts-binding）对同引擎实例做了请求互斥，第二请求排队。daemon 等待队列有界 **4**（不含在途请求）：满员的新请求收 `error` 帧，message 携带固定前缀 `daemon queue full`——TS 侧按前缀识别为容量瞬态，转 per-call 重放且 daemon 不判死、不进熔断；拒转不关连接（关连接会伪装成在途 EOF 误计失败）。该 message 是跨语言契约，TS 常量与 shim 源文本由对拍测试钉死。
-- **超时**（Node 侧，gptsovits 实装值）：per-call ready 等待 120s（冷启动 12s 的 10 倍余量）、单请求等待 180s；daemon 形态直连握手 5s（温态 ready 应即时，长等即僵死判据）、温态单请求 60s（纯推理秒级 + 排队余量，不含加载成本）。indextts 覆写 ready 等待为 240s（per-call 与 daemon 加载窗同口径：5GB 权重 + MPS 初始化 + auto 层首跑自拉余量，实测首跑 76.7s），其余继承缺省。超时即杀进程，收敛为合成失败进回退链（daemon 形态先经 per-call 降级）。
+- **超时**（Node 侧）：daemon 温态直连握手 5s（温态 ready 应即时，长等即僵死判据，全局缺省）；ready 加载窗与温态单请求为 per-engine 四行投影，数值与四 binding 导出常量同源（同口径原则：daemon 加载窗与 per-call ready 同值、温态单请求与 per-call 同预算线——主路径不严于退路；`say daemon ls` 的「加载中」判定窗复用同一数）。超时即杀进程，收敛为合成失败进回退链（daemon 形态先经 per-call 降级）：
+  - gptsovits：ready 120s（显式导出=全局缺省；冷启动实测常态 ~12s，余量覆盖首跑 JIT 与慢盘）、温态单请求 60s（继承全局缺省：纯推理秒级 + 排队余量，不含加载成本）、per-call 单请求 180s。
+  - indextts：ready 240s（per-call 同口径：5GB 权重 + MPS 初始化 + auto 层首跑自拉余量，实测首跑 76.7s）、温态单请求 60s（继承缺省：温态单请求被 say 层分块界定）、per-call 单请求 180s。
+  - firered：ready 240s（20.8GB 权重 + MPS 初始化 + 首跑 kernel 编译余量）、温态单请求 180s（与 per-call 合成同口径显式放宽：长文本引擎内拆句多段串行，60s 缺省会误杀健康慢合成）、per-call 合成 180s。
+  - voxcpm：ready 180s（from_pretrained + optimize 构造期 warm-up 一次完整合成，含慢盘 torch.compile 余量）、温态单请求 180s（与 per-call 帧间活动 180s 同预算线的绝对制落点：流式总时长随句长变化且叠加 ≤4 路排队）、per-call 帧间活动 180s（流式形态，见音频块节）。
 - **孤儿兜底**：shim 不做「父进程死了我就自杀」的 stdin EOF 守卫式探测（shell 后台场景 /dev/null 的 EOF 与管道断开不可区分）；生命周期完全由管道 EOF 与信号承载，per-call 形态下宿主退出即管道断开。
 
 ## 失败面（全部收敛为引擎合成失败，进 say 回退链）
