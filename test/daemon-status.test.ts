@@ -14,7 +14,7 @@ import { createFakeHost } from "./fake-host.ts";
 import { readyFrame, startFakeDaemon } from "./daemon-fakes.ts";
 
 /**
- * `say daemon ls` 观测面测试（热启动 S6）：六态判定矩阵走真 unix socket——
+ * `say daemon ls` 观测面测试（热启动）：六态判定矩阵走真 unix socket——
  * warm/stale/loading/fatal 的差别全在 ready 帧的到达与否与内容相符与否，
  * 传输时序（bind 后不出 ready）只有真服务端能给。pid 生死走真 process.kill(pid,0)
  * （活体用 process.pid，死体用 999999），rss/etime 走 ps 桩——观测面自己 spawn 的
@@ -45,12 +45,11 @@ function harness(psStdout: string | null = null) {
 }
 
 describe("daemonPathsOf 与 session 的注册点落位同源", () => {
-  it("sock/pid/log 三件都落在 say-lab/<engine> 之下", () => {
+  it("sock/pid 两件都落在 say-lab/<engine> 之下", () => {
     const p = daemonPathsOf({ XDG_DATA_HOME: "/d" }, "indextts");
     expect(p.labDir).toBe("/d/say-lab/indextts");
     expect(p.sockPath).toBe("/d/say-lab/indextts/daemon.sock");
     expect(p.pidPath).toBe("/d/say-lab/indextts/daemon.pid");
-    expect(p.logPath).toBe("/d/say-lab/indextts/daemon.log");
   });
 });
 
@@ -161,6 +160,21 @@ describe("probeDaemonStatus 六态矩阵", () => {
       const row = await probeDaemonStatus(host, "gptsovits", 150);
       expect(row.state).toBe("unreachable");
       expect(row.note).toContain("僵死");
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("龄读数缺失（ps 失败）的沉默 sock 不谎报超窗：pid 在位豁免照给，判 loading", async () => {
+    const { fake, host, paths } = harness(null); // ps 一律 exit 1：etime 无从折算
+    const daemon = await startFakeDaemon(paths.sockPath, { ready: "none" });
+    try {
+      fake.files.set(paths.sockPath, "");
+      fake.files.set(paths.pidPath, `${process.pid}\n`);
+      const row = await probeDaemonStatus(host, "gptsovits", 150);
+      expect(row.state).toBe("loading");
+      expect(row.note).toContain("龄期读数缺失");
+      expect(row.etime).toBeNull();
     } finally {
       await daemon.close();
     }

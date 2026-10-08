@@ -10,7 +10,7 @@ import { DAEMON_READY_TIMEOUT_MS as FIRERED_READY_MS, expectedDaemonVersionKey a
 import { DAEMON_READY_TIMEOUT_MS as VOXCPM_READY_MS, expectedDaemonVersionKey as voxcpmVersionKey } from "./engines/voxcpm-binding.ts";
 
 /**
- * 常驻 daemon 的只读观测面（热启动 S6 `say daemon ls`）：连接 + ready 帧握手探测，
+ * 常驻 daemon 的只读观测面（`say daemon ls`）：连接 + ready 帧握手探测，
  * 与 session 的差异是纪律——不 kill、不 unlink、不拉起、不清残file。
  * 观测的每次误杀都会把健康 daemon 变成一次冷启动，只读性是这条命令的存在前提。
  */
@@ -21,15 +21,15 @@ export type DaemonProbeState = "warm" | "loading" | "stale" | "unreachable" | "i
 
 export interface DaemonPaths {
   labDir: string;
+  /** sock + pid 两件是探测与停机的触达面；daemon.log 归归档面（人工排障直查），不进本投影 */
   sockPath: string;
   pidPath: string;
-  logPath: string;
 }
 
-/** 注册点三件（sock/pid/log）与 binding/session 的落位逐字同源：lab 根经 XDG data 推导 */
+/** 注册点可触达面与 binding/session 的落位逐字同源：lab 根经 XDG data 推导 */
 export function daemonPathsOf(env: EnvMap, engine: DaemonEngine): DaemonPaths {
   const labDir = sayLabEngineDir(env, engine);
-  return { labDir, sockPath: `${labDir}/daemon.sock`, pidPath: `${labDir}/daemon.pid`, logPath: `${labDir}/daemon.log` };
+  return { labDir, sockPath: `${labDir}/daemon.sock`, pidPath: `${labDir}/daemon.pid` };
 }
 
 /** 各引擎握手权威面的登记表：版本键投影与加载窗都取自 binding 导出，观测判据不留第二份真源 */
@@ -125,7 +125,7 @@ export function probeDaemonSock(sockPath: string, timeoutMs = 2_000): Promise<So
       conn.setNoDelay(true);
     });
     conn.on("data", (chunk: Buffer) => {
-      // Buffer 累积按 \n 切行再 toString：逐 chunk toString 会切断多字节 UTF-8（S1 传输面教训）
+      // Buffer 累积按 \n 切行再 toString：逐 chunk toString 会切断多字节 UTF-8（传输面实测教训）
       buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
       for (;;) {
         const cut = buf.indexOf(0x0a);
@@ -183,6 +183,10 @@ export async function probeDaemonStatus(host: Host, engine: DaemonEngine, readyP
     const ageSec = etime !== null ? etimeToSeconds(etime) : null;
     if (alive && ageSec !== null && ageSec * 1000 < ADMIN[engine].readyWindowMs) {
       return { ...base, state: "loading", note: `bind 先于加载：加载窗 ${Math.round(ADMIN[engine].readyWindowMs / 1000)}s 内，稍后再 ls` };
+    }
+    // 龄读不到（ps 失败或 etime 不合形）不写成「超窗」：pid 在位的豁免照给，把未知讲成已知是误判
+    if (alive && ageSec === null) {
+      return { ...base, state: "loading", note: "可连未 ready 且 pid 在位，龄期读数缺失按在位豁免判加载：稍后再 ls" };
     }
     return { ...base, state: "unreachable", note: alive ? "pid 在位但 ready 迟迟不到且龄超加载窗：判僵死，stop 可强收" : "sock 在位但无人应答" };
   }

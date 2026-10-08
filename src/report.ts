@@ -25,8 +25,8 @@ export function fail(host: Host, message: string): number {
 }
 
 /**
- * SAY_DEBUG daemon 段（热启动 S6）：把 daemon-trace 记的形态拼进摘要。
- * 词表 warm|cold(Xs)|per-call|cooldown|off 按蓝图票 06 钉死。
+ * SAY_DEBUG daemon 段（热启动）：把 daemon-trace 记的形态拼进摘要。
+ * 词表 warm|cold(Xs)|per-call|cooldown|off 按蓝图钉死。
  * 非 daemon 引擎（sherpa/system/zipvoice）无记账，整段省略——不写 daemon=n/a，
  * 让 grep daemon= 天然只命中四 shim-daemon 引擎的调用。
  * cold 的 Xs = 本调用实付加载窗（秒，一位小数），其余形态不带耗时。

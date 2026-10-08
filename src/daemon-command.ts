@@ -6,13 +6,13 @@ import { probeDaemonStatus, type DaemonStatusRow } from "./daemon-status.ts";
 import { runDaemonStop } from "./daemon-stop.ts";
 
 /**
- * `say daemon ls` 编排（热启动 S6 用户面）：逐引擎只读探测，一行一态。
+ * `say daemon ls` 编排（用户面）：逐引擎只读探测，一行一态。
  * 探测彼此独立并发跑（各引擎的 sock 判据互不相关），全表耗时 ≈ 单引擎探测耗时。
  * 输出走 writeStdout（管理命令的清单通道，与 engine ls 同形），stdout 保持管道友好——
  * 表头与行都是数据，错误归因才进 stderr。
  */
 
-/** 人读内存：KB 起跳 MB/GB 一档小数，与 S3/S5 报告的常驻体量口径同字面（~10GB、~4.6GB） */
+/** 人读内存：KB 起跳 MB/GB 一档小数，与常驻化报告的常驻体量口径同字面（~10GB、~4.6GB） */
 export function formatRss(rssKb: number | null): string {
   if (rssKb === null) return "-";
   if (rssKb < 1024) return `${rssKb}KB`;

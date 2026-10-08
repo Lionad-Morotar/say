@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { daemonFormOf, recordDaemonForm, resetDaemonTrace } from "../src/daemon-trace.ts";
 
 /**
- * daemon-trace 单例的覆盖序（热启动 S6）：SAY_DEBUG 摘要读的是「这次调用走没走热路」，
+ * daemon-trace 单例的覆盖序（热启动）：SAY_DEBUG 摘要读的是「这次调用走没走热路」，
  * 形态事件在合成期多路并发到达（established / 降级 / 冷却），记账规则决定末次可见形态。
  */
 describe("daemon-trace：形态记账覆盖序", () => {

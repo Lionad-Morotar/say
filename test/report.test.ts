@@ -5,7 +5,7 @@ import type { ResolvedConfig } from "../src/types.ts";
 import { createFakeHost } from "./fake-host.ts";
 
 /**
- * SAY_DEBUG daemon 段的渲染口径（票 06 词表）：warm|cold(Xs)|per-call|cooldown|off
+ * SAY_DEBUG daemon 段的渲染口径（蓝图词表）：warm|cold(Xs)|per-call|cooldown|off
  * 拼进摘要行 engine= 之后；非 daemon 引擎无记账则整段省略。
  */
 

@@ -19,8 +19,8 @@ export type CliRequest =
     }
   /** 引擎管理子命令（say engine ls/use），编排层经注册表与 say-lab 安装状态执行 */
   | { kind: "engine"; action: "ls" | "use"; name: string | null }
-  /** 常驻 daemon 管理子命令（say daemon ls/stop，热启动 S6）：ls 只读探测注册点；
-   *  stop 目标是引擎名或 "all"（无参与 --all 同义，票 05 形态），合法性校验归编排层 */
+  /** 常驻 daemon 管理子命令（say daemon ls/stop）：ls 只读探测注册点；
+   *  stop 目标是引擎名或 "all"（无参与 --all 同义），合法性校验归编排层 */
   | { kind: "daemon"; action: "ls" }
   | { kind: "daemon"; action: "stop"; target: string }
   | { kind: "passthrough"; argv: string[] }
@@ -77,7 +77,7 @@ export function parseArgv(argv: readonly string[]): CliRequest {
       return { kind: "engine", action: "use", name: third };
     }
   }
-  // daemon 管理子命令与 engine 同一精确形态纪律（热启动 S6）：
+  // daemon 管理子命令与 engine 同一精确形态纪律（热启动）：
   // 动词在、形态不齐吵闹报用法错误；daemon 后跟其他词（`say daemon is quiet`）整句回落文本朗读
   if (head === "daemon") {
     if (second === undefined) {

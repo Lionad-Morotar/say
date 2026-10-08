@@ -229,7 +229,7 @@ def serve_daemon(args) -> int:
             stop_flag.set()
             return
         req_id = req.get("id", -1)
-        # caller_pid 归因（S6）：id 是调用方进程内计数器，多 CLI 进程并发共号时完成/离场行靠它指认发起者
+        # caller_pid 归因：id 是调用方进程内计数器，多 CLI 进程并发共号时完成/离场行靠它指认发起者
         caller_pid = req.get("caller_pid")
         req_tag = f"请求 {req_id}" + (f"（来自 pid {caller_pid}）" if caller_pid is not None else "")
         model = engine_info["model"]

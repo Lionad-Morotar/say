@@ -1,10 +1,10 @@
 import type { DaemonEngine } from "./config.ts";
 
 /**
- * SAY_DEBUG daemon 段的进程级形态记账（热启动 S6）：
+ * SAY_DEBUG daemon 段的进程级形态记账（热启动）：
  * 一次 CLI 调用 = 一个进程，daemon 形态在合成期发生、在摘要渲染期读取，
  * 两者隔着编排层多跳——用模块级单例记账而非逐层透传参数，接线面因此只动装配点。
- * 形态词表按蓝图票 06 钉死：warm | cold(Xs) | per-call | cooldown | off。
+ * 形态词表按蓝图钉死：warm | cold(Xs) | per-call | cooldown | off。
  */
 
 /** 常驻形态五值：warm 直连命中、cold 本调用拉起加载、per-call 基础设施失败退路、cooldown 熔断冷却直拒、off 门关不装配 */

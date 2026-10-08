@@ -15,9 +15,11 @@ import { createFakeHost } from "./fake-host.ts";
  * 注册点内存面走 fake host（removes 清单可断言），sock inode 走真磁盘临时目录（连接要真成功）。
  */
 
-// node -e 让脚本参数整体后移（argv[1] 起就是 -e 后的位置参），slice(-2) 按位取末两参免偏移坑
+// mode/sock 走 env 传递：命令行位置让给「--daemon standby-shim.py」双特征——
+// stop 的触达前身份核对按 shim 命令行特征放行，替身必须长得像真 daemon 才走到信号面
 const SCRIPT = `
-const [mode, sock] = process.argv.slice(-2);
+const mode = process.env.SAY_STANDBY_MODE;
+const sock = process.env.SAY_STANDBY_SOCK;
 process.on("SIGTERM", () => { if (mode !== "stubborn") process.exit(0); });
 if (mode !== "bare") {
   const net = require("net");
@@ -40,7 +42,12 @@ const tmpRoots: string[] = [];
 function startStandbyDaemon(mode: "graceful" | "deaf" | "stubborn" | "bare", sockPath: string): Promise<number> {
   return new Promise((resolve, reject) => {
     mkdirSync(dirname(sockPath), { recursive: true });
-    const child = spawn(process.execPath, ["-e", SCRIPT, mode, sockPath], { stdio: ["ignore", "pipe", "inherit"] });
+    // `--` 终止 node 自身选项解析（`--daemon` 直写会被 node 当未知 flag 拒绝），
+    // 位置参数仍进 ps command= 供 stop 的身份核对命中 shim 双特征
+    const child = spawn(process.execPath, ["-e", SCRIPT, "--", "standby-shim.py", "--daemon"], {
+      stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env, SAY_STANDBY_MODE: mode, SAY_STANDBY_SOCK: sockPath },
+    });
     child.once("error", reject);
     child.stdout!.on("data", (chunk) => {
       if (String(chunk).includes("up")) resolve(child.pid!);
@@ -60,13 +67,23 @@ afterAll(() => {
   for (const root of tmpRoots) rmSync(root, { recursive: true, force: true });
 });
 
-function harness() {
+/** ps 的 command= 查询桩：默认回 shim daemon 命令行形态（含 `-shim.py` + `--daemon` 双特征） */
+const DAEMON_COMMAND = "/h/.local/share/say-lab/gptsovits/venv/bin/python /r/scripts/shims/gptsovits-shim.py --models /m --lab /l --daemon --idle-minutes 15\n";
+
+function harness(psCommand: string = DAEMON_COMMAND) {
   const root = mkdtempSync(join(tmpdir(), "say-daemon-stop-"));
   tmpRoots.push(root);
   const env = { XDG_DATA_HOME: root };
   const paths = daemonPathsOf(env, "gptsovits");
   mkdirSync(paths.labDir, { recursive: true });
-  const fake = createFakeHost({ env, files: {} });
+  const fake = createFakeHost({
+    env,
+    files: {},
+    spawnOutcome: (record) =>
+      record.cmd === "ps" && record.args.includes("command=")
+        ? { exitCode: 0, signal: null, stdout: psCommand, stderr: "" }
+        : { exitCode: 1, signal: null, stdout: "", stderr: "" },
+  });
   return { fake, paths, host: fake.host, root };
 }
 
@@ -122,7 +139,7 @@ describe("stopDaemonEngine 触达矩阵", () => {
     const { fake, paths, host } = harness();
     const pid = await standBy("bare", fake, paths); // bare 不起 server：sock 无真 daemon
     // bare 模式只登记 pid（standBy 对 bare 不登记 sock），但 sock inode 其实不存在——
-    // 文件面「sock 在位而不可达」要 unlink-rebind 级仿真，这里按票 05 的 zombie 面：只验 SIGTERM 收口
+    // 文件面「sock 在位而不可达」要 unlink-rebind 级仿真，这里按 zombie 形态：只验 SIGTERM 收口
     fake.files.delete(paths.sockPath);
     const outcome = await stopDaemonEngine(host, "gptsovits", { graceMs: 5_000, pollMs: 30 });
     expect(outcome.result).toBe("stopped");
@@ -148,9 +165,29 @@ describe("stopDaemonEngine 触达矩阵", () => {
     fake.files.set(paths.sockPath, ""); // 无 pid 文件
     const outcome = await stopDaemonEngine(host, "gptsovits", { pollMs: 30 });
     expect(outcome.result).toBe("signalled");
-    expect(outcome.detail).toContain("帧已送达");
+    expect(outcome.detail).toContain("帧已写出");
     await new Promise((r) => setTimeout(r, 200));
     expect(isPidAlive(pid)).toBe(false); // 帧的实效不由返回值背书，用真退场钉
+  });
+
+  it("pid 复用守卫：注册点 pid 被非 say 进程占用时拒发信号、不删注册点", async () => {
+    // pid 文件指向本测试进程自己：守卫失效的话 SIGTERM 会当场打死 vitest——
+    // 用例能活着断言 refused 本身就是守卫在位的证明
+    const { fake, paths, host } = harness("/bin/zsh -il -c make important-build\n");
+    fake.files.set(paths.sockPath, "");
+    fake.files.set(paths.pidPath, `${process.pid}\n`);
+    const outcome = await stopDaemonEngine(host, "gptsovits", { pollMs: 30 });
+    expect(outcome.result).toBe("refused");
+    expect(outcome.detail).toContain("复用");
+    expect(fake.removes).toEqual([]); // 残file 交下次合成的 unlink-rebind 自愈，不在此处赌身份
+  });
+
+  it("ps 查不到 command= 归 unknown 放行：身份守卫不引入新的失败模式", async () => {
+    const { fake, paths, host } = harness("");
+    fake.files.set(paths.sockPath, ""); // ps exit 0 但空输出（进程恰好退场的形态）
+    fake.files.set(paths.pidPath, "999999\n");
+    const outcome = await stopDaemonEngine(host, "gptsovits", { pollMs: 30 });
+    expect(outcome.result).toBe("cleaned"); // 死 pid 走清理路径，identity 未拦
   });
 
   it("absent：注册点全无时幂等成功，不动任何文件", async () => {

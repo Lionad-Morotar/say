@@ -235,7 +235,7 @@ export function createVoxcpmSynth(spec: VoxcpmLabSpec, host: Host, tuning: Voxcp
         promptLang: "auto",
         textLang: "auto",
         speedFactor: 1.0,
-        // caller_pid 归因（S6）：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        // caller_pid 归因：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
         callerPid: host.pid,
         ...(req.control !== null ? { control: req.control } : {}),
       }),

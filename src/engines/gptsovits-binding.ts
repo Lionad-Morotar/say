@@ -189,7 +189,7 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
   const runViaDaemon = async (req: GptsovitsSynthRequest, id: number): Promise<GptsovitsSynthResult> => {
     const chunks: Float32Array[] = [];
     let sampleRate: number | null = null;
-    // caller_pid 归因（S6）：daemon.log 的完成行在多 CLI 进程并发共号时仍可指认发起者
+    // caller_pid 归因：daemon.log 的完成行在多 CLI 进程并发共号时仍可指认发起者
     for await (const line of session.request(encodeRequest({ ...req, id, callerPid: host.pid }))) {
       const msg = parseLine(line);
       if (msg === null) continue; // 杂散行（引擎库噪音进 socket 的既有形态）：丢弃面与 per-call 一致

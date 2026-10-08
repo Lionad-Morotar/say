@@ -5,7 +5,7 @@ import { DAEMON_ENGINES } from "../src/config.ts";
 import { STOP_GRACE_MS } from "../src/daemon-stop.ts";
 
 /**
- * 四引擎停机 parity 对拍（S5 移交、S6 收口）：say daemon stop 的双通道触达要求
+ * 四引擎停机 parity 对拍（前置切片移交项，本面收口）：say daemon stop 的双通道触达要求
  * 四 shim 的 shutdown 帧判定与 SIGTERM 捕获语义逐字同形——引擎库各异，但「stop_flag.set()
  * 即停止接受并排空在途」的生命周期契约必须一致，否则 stop 的按引擎窗就成了逐引擎碰运气。
  * 双实现对拍的先例是 daemon-fingerprint.test.ts（TS 与 Python 的指纹面同构校验）。

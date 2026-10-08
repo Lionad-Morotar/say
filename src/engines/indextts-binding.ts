@@ -213,7 +213,7 @@ export function createIndexttsSynth(spec: IndexttsLabSpec, host: Host, tuning: I
         promptLang: "auto",
         textLang: req.textLang,
         speedFactor: 1.0,
-        // caller_pid 归因（S6）：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
+        // caller_pid 归因：daemon.log 完成行在多 CLI 进程并发共号时可指认发起者
         callerPid: host.pid,
         ...(req.durationFactor !== undefined ? { durationFactor: req.durationFactor } : {}),
         ...(req.emoAlpha !== undefined ? { emoAlpha: req.emoAlpha } : {}),

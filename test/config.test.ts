@@ -265,7 +265,7 @@ describe("resolveConfig：flag > env > config > 默认", () => {
 describe("resolveDaemonConfig：[daemon] 节三层优先级（内置 < config < env，无 flag 层）", () => {
   const BUILTIN_IDLE = { gptsovits: 15, indextts: 30, voxcpm: 15, firered: 5 } as const;
 
-  it("三层全空：daemon 默认开启 + 内置 per-engine idle 表（票 03 裁决值）", () => {
+  it("三层全空：daemon 默认开启 + 内置 per-engine idle 表（蓝图裁决值）", () => {
     const resolved = resolveDaemonConfig({ env: {}, file: null });
     expect(resolved.enabled).toBe(true);
     expect(resolved.idleMinutes).toEqual(BUILTIN_IDLE);
@@ -278,7 +278,7 @@ describe("resolveDaemonConfig：[daemon] 节三层优先级（内置 < config < 
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("env SAY_DAEMON=off 压过 config enabled=true；on 压过 config enabled=false（票 05 三层沿袭）", () => {
+  it("env SAY_DAEMON=off 压过 config enabled=true；on 压过 config enabled=false（三层沿袭）", () => {
     expect(resolveDaemonConfig({ env: { SAY_DAEMON: "off" }, file: { daemon: { enabled: true } } }).enabled).toBe(false);
     expect(resolveDaemonConfig({ env: { SAY_DAEMON: "on" }, file: { daemon: { enabled: false } } }).enabled).toBe(true);
   });

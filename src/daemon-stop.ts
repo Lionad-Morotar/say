@@ -5,7 +5,7 @@ import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from "./report.ts";
 import { daemonPathsOf, isPidAlive, readDaemonPid } from "./daemon-status.ts";
 
 /**
- * `say daemon stop` 的停机编排（热启动 S6，票 05 形态：SIGTERM 优雅停 + 超时 SIGKILL + 清 sock 残留）。
+ * `say daemon stop` 的停机编排（形态按蓝图：SIGTERM 优雅停 + 超时 SIGKILL + 清 sock 残留）。
  * 双通道并发触达是形态必然：shutdown 帧走 sock（覆盖 pid 文件丢失的常驻体），
  * SIGTERM 走 pid（覆盖 sock 脱落的 zombie）；shim 两路都收敛到 stop_flag，重复触达幂等。
  * 与 ls 的只读纪律相反，stop 是写侧命令：unlink 只在确认进程死亡后发生——
@@ -14,7 +14,7 @@ import { daemonPathsOf, isPidAlive, readDaemonPid } from "./daemon-status.ts";
 
 /**
  * 按引擎的优雅退场窗，超时升 SIGKILL。数值来源（真机实测，非拍脑袋）：
- * indextts SIGTERM 退场 ~7s（torch/MPS 资源释放延迟，S5 台账沉淀），firered/voxcpm 同栈未单独
+ * indextts SIGTERM 退场 ~7s（torch/MPS 资源释放延迟，真机台账沉淀），firered/voxcpm 同栈未单独
  * 实测、取同量级；gptsovits CPU 档毫秒级退场，窗给 15s 覆盖「在途一句排空 + 释放」的坏例。
  * 一刀切的否决理由：CPU 档等 GPU 档的窗是白等，GPU 档吃 CPU 档的窗会误杀在途合成。
  */
@@ -80,6 +80,24 @@ export function sendShutdownFrame(sockPath: string, budgetMs = 1_000): Promise<b
   });
 }
 
+/**
+ * 触达前的 pid 身份核对：SIGKILL/崩溃残留的注册点里 pid 可能被内核复用给同用户进程，
+ * isPidAlive 只证明存在不证明归属——对复用体发 SIGTERM 是误杀用户活跃进程。
+ * shim daemon 命令行有「*-shim.py + --daemon」双特征（spawnDaemon 的装配面），非符判复用；
+ * ps 不可用/查不到归 unknown 放行：守卫不引入新的失败模式，退场确认仍由 isPidAlive 收敛。
+ */
+async function classifyPidIdentity(host: Host, pid: number): Promise<"daemon" | "reused" | "unknown"> {
+  try {
+    const outcome = await host.spawn("ps", ["-o", "command=", "-p", String(pid)]);
+    if (outcome.exitCode !== 0) return "unknown";
+    const command = outcome.stdout.trim();
+    if (command.length === 0) return "unknown"; // 恰在此刻退场：交给存活探测的自然收敛
+    return /-shim\.py\b/.test(command) && /--daemon\b/.test(command) ? "daemon" : "reused";
+  } catch {
+    return "unknown";
+  }
+}
+
 async function waitForExit(pid: number, budgetMs: number, pollMs: number): Promise<boolean> {
   const deadline = Date.now() + budgetMs;
   for (;;) {
@@ -116,18 +134,22 @@ export async function stopDaemonEngine(host: Host, engine: DaemonEngine, tuning:
   const waited = (): number => Date.now() - t0;
 
   if (pid === null) {
-    // pid 文件缺失但 sock 在位：帧已到（或注册点是残file 没人收），无 pid 柄可确认与清理
+    // pid 文件缺失但 sock 在位：帧已写出（或注册点是残file 没人收），无 pid 柄可确认与清理
     return {
       engine,
       result: "signalled",
       waitedMs: waited(),
-      detail: frameSent ? "shutdown 帧已送达（无 pid 句柄，退场确认与清理交下次调用）" : "sock 在位但不可达且无 pid 句柄，未触达",
+      detail: frameSent ? "shutdown 帧已写出（flush 完成不等于 daemon 处理，实效交下次调用确认）" : "sock 在位但不可达且无 pid 句柄，未触达",
     };
   }
 
   if (!isPidAlive(pid)) {
     await cleanupRegistrationPoints(host, sockPath, pidPath);
     return { engine, result: "cleaned", waitedMs: waited(), detail: "pid 已死，清掉残留注册点" };
+  }
+
+  if ((await classifyPidIdentity(host, pid)) === "reused") {
+    return { engine, result: "refused", waitedMs: waited(), detail: "pid 疑被非 say 进程复用：拒动信号（爆炸半径是误杀活跃进程），注册点残file 交下次合成的 unlink-rebind 自愈" };
   }
 
   const term = sendSignal(pid, "SIGTERM");

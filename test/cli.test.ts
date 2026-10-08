@@ -161,7 +161,7 @@ describe("engine 管理子命令解析", () => {
   });
 });
 
-describe("daemon 管理子命令解析（热启动 S6）", () => {
+describe("daemon 管理子命令解析（热启动）", () => {
   it("daemon ls 是管理请求", () => {
     expect(parseArgv(["daemon", "ls"])).toEqual({ kind: "daemon", action: "ls" });
   });
@@ -183,7 +183,7 @@ describe("daemon 管理子命令解析（热启动 S6）", () => {
     expect(parseArgv(["daemon", "stop", "indextts"])).toEqual({ kind: "daemon", action: "stop", target: "indextts" });
   });
 
-  it("无参与 --all 同义全停（票 05 的 [engine|--all] 可选形态）", () => {
+  it("无参与 --all 同义全停（[engine|--all] 可选形态）", () => {
     expect(parseArgv(["daemon", "stop"])).toEqual({ kind: "daemon", action: "stop", target: "all" });
     expect(parseArgv(["daemon", "stop", "--all"])).toEqual({ kind: "daemon", action: "stop", target: "all" });
   });
