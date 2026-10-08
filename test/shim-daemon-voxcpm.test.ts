@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
  * voxcpm shim 的 daemon 服务循环真实现场测试（热启动 S5 voxcpm 链，gptsovits 钉版同构复制）。
@@ -479,6 +480,13 @@ describe("voxcpm shim 协议面与 CLI 契约", () => {
     const m = /QUEUE_FULL_MESSAGE = "([^"]+)"/.exec(py);
     expect(m).not.toBeNull();
     expect(m?.[1]).toBe(DAEMON_QUEUE_FULL_MESSAGE);
+  });
+
+  it("idle 收割缺省档跨语言对拍：shim --idle-minutes 缺省字面量 = config 内置表（手动拉起 daemon 与产品面档位不许静默分叉）", () => {
+    const py = readFileSync(SHIM, "utf8");
+    const m = /--idle-minutes", type=float, default=([\d.]+)/.exec(py);
+    expect(m).not.toBeNull();
+    expect(Number(m?.[1])).toBe(BUILTIN_DAEMON_IDLE.voxcpm);
   });
 
   it("--print-fingerprint 免引擎依赖：无 --lab 时按 --models 父目录推导 lab 投影，产出 64hex", () => {

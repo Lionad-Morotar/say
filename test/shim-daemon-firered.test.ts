@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
  * firered shim 的 daemon 服务循环真实现场测试（热启动 S5，钉版照抄的 firered 变体）。
@@ -344,6 +345,13 @@ describe("firered shim --daemon 活体竞态、队列容量与版本键（假引
     const m = /QUEUE_FULL_MESSAGE = "([^"]+)"/.exec(py);
     expect(m).not.toBeNull();
     expect(m?.[1]).toBe(DAEMON_QUEUE_FULL_MESSAGE);
+  });
+
+  it("idle 收割缺省档跨语言对拍：shim --idle-minutes 缺省字面量 = config 内置表（手动拉起 daemon 与产品面档位不许静默分叉）", () => {
+    const py = readFileSync(SHIM, "utf8");
+    const m = /--idle-minutes", type=float, default=([\d.]+)/.exec(py);
+    expect(m).not.toBeNull();
+    expect(Number(m?.[1])).toBe(BUILTIN_DAEMON_IDLE.firered);
   });
 
   it("--print-fingerprint 独立可跑：免 --models 不触引擎 import，产出 64hex（空投影清单也是合法指纹，indextts 钉版 CLI 契约同构）", () => {
