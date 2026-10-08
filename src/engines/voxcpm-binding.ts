@@ -1,3 +1,4 @@
+import { BUILTIN_DAEMON_IDLE } from "../config.ts";
 import { EngineError, messageOf } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -144,8 +145,9 @@ export function createShimStreamSynth(spec: VoxcpmLabSpec, host: Host): VoxcpmSt
  *  代际变更必同时击穿指纹，双路自兜（决策台账 D2 取证） */
 const DAEMON_PROTOCOL_VERSION = "2";
 const DAEMON_ENGINE_VERSION = "VoxCPM2Model";
-/** 闲置收割阈值（分钟）：票 03 per-engine 表钉 voxcpm=15（4.6GB 档，burst 间隔容忍度高于 firered） */
-const DAEMON_IDLE_MINUTES = 15;
+/** 闲置收割缺省档：voxcpm 4.6GB 档取默认档（burst 间隔容忍度高于 firered 的 5 分钟档），
+ *  单源在 config 内置表，[daemon] 配置层经装配点覆盖 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.voxcpm;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 180s：from_pretrained + optimize 构造期
  *  warm-up（一次完整合成）的量级，慢盘首跑 torch.compile 余量含在内 */
 const DAEMON_READY_TIMEOUT_MS = 180_000;

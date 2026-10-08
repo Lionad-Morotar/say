@@ -1,6 +1,7 @@
+import { resolveDaemonConfig, type DaemonEngine, type DaemonEngineSettings } from "../config.ts";
 import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
 import { resolvePaths, sayLabEngineDir } from "../paths.ts";
-import type { EngineAdapter, ResolvedConfig } from "../types.ts";
+import type { ConfigFile, EngineAdapter, ResolvedConfig } from "../types.ts";
 import { createFireredEngine } from "./firered.ts";
 import type { FireredSynth } from "./firered-binding.ts";
 import { createGptsovitsEngine } from "./gptsovits.ts";
@@ -78,53 +79,70 @@ export async function routeEngine(config: ResolvedConfig, registry: EngineRegist
   return { engine: configured, voice };
 }
 
+export interface DefaultRegistryOptions {
+  sayBin?: string;
+  synth?: SherpaSynth;
+  cloneSynth?: ZipvoiceSynth;
+  gptsovitsSynth?: GptsovitsSynth;
+  voxcpmSynth?: VoxcpmStreamSynth;
+  indexttsSynth?: IndexttsSynth;
+  fireredSynth?: FireredSynth;
+  /** [daemon] 三层解析的 config 层输入：main() 读盘后注入；缺席 = env/内置两层（与 config 层上线前接线等价） */
+  daemonFile?: ConfigFile | null;
+}
+
 /**
  * 登记即接线：实现 EngineAdapter 后在这里加一行，config 的 `engine = "<name>"`
  * 与环境变量 SAY_ENGINE 立刻能切过去，不需要改编排层。
  */
-export function createDefaultRegistry(
-  host: Host,
-  sayBin: string = SYSTEM_SAY_BIN,
-  synth: SherpaSynth = synthesizeWithBinding,
-  cloneSynth: ZipvoiceSynth = synthesizeWithZipvoiceBinding,
-  gptsovitsSynth?: GptsovitsSynth,
-  voxcpmSynth?: VoxcpmStreamSynth,
-  indexttsSynth?: IndexttsSynth,
-  fireredSynth?: FireredSynth,
-): EngineRegistry {
+export function createDefaultRegistry(host: Host, options: DefaultRegistryOptions = {}): EngineRegistry {
   const paths = resolvePaths(host.env);
+  // daemon 三层解析与警告归因在接线层单源一次：每次调用 resolve + 打印一轮，
+  // 而不是逐引擎工厂各打一份（旧形态坏 SAY_DAEMON 会在 stderr 刷四行同文警告）
+  const daemon = resolveDaemonConfig({ env: host.env, file: options.daemonFile ?? null });
+  for (const warning of daemon.warnings) host.writeStderr(`say: ${warning}\n`);
+  const settingsFor = (engine: DaemonEngine): DaemonEngineSettings => ({ enabled: daemon.enabled, idleMinutes: daemon.idleMinutes[engine] });
   const gptsovits = createGptsovitsEngine({
     host,
     labDir: sayLabEngineDir(host.env, "gptsovits"),
     voicesDir: paths.voicesDir,
-    ...(gptsovitsSynth !== undefined ? { synth: gptsovitsSynth } : {}),
+    daemonSettings: settingsFor(GPTSOVITS_ENGINE),
+    ...(options.gptsovitsSynth !== undefined ? { synth: options.gptsovitsSynth } : {}),
   });
   const voxcpm = createVoxcpmEngine({
     host,
     labDir: sayLabEngineDir(host.env, "voxcpm"),
     voicesDir: paths.voicesDir,
-    ...(voxcpmSynth !== undefined ? { synth: voxcpmSynth } : {}),
+    daemonSettings: settingsFor(VOXCPM_ENGINE),
+    ...(options.voxcpmSynth !== undefined ? { synth: options.voxcpmSynth } : {}),
   });
   const indextts = createIndexttsEngine({
     host,
     labDir: sayLabEngineDir(host.env, "indextts"),
     voicesDir: paths.voicesDir,
-    ...(indexttsSynth !== undefined ? { synth: indexttsSynth } : {}),
+    daemonSettings: settingsFor(INDEXTTS_ENGINE),
+    ...(options.indexttsSynth !== undefined ? { synth: options.indexttsSynth } : {}),
   });
   const firered = createFireredEngine({
     host,
     labDir: sayLabEngineDir(host.env, "firered"),
     voicesDir: paths.voicesDir,
-    ...(fireredSynth !== undefined ? { synth: fireredSynth } : {}),
+    daemonSettings: settingsFor(FIRERED_ENGINE),
+    ...(options.fireredSynth !== undefined ? { synth: options.fireredSynth } : {}),
   });
   return createRegistry([
-    createSherpaEngine({ host, modelsDir: paths.modelsDir, synth }),
-    createZipvoiceEngine({ host, modelsDir: paths.modelsDir, voicesDir: paths.voicesDir, synth: cloneSynth }),
+    createSherpaEngine({ host, modelsDir: paths.modelsDir, synth: options.synth ?? synthesizeWithBinding }),
+    createZipvoiceEngine({
+      host,
+      modelsDir: paths.modelsDir,
+      voicesDir: paths.voicesDir,
+      synth: options.cloneSynth ?? synthesizeWithZipvoiceBinding,
+    }),
     gptsovits,
     voxcpm,
     indextts,
     firered,
-    createSystemEngine(host, sayBin),
+    createSystemEngine(host, options.sayBin ?? SYSTEM_SAY_BIN),
   ]);
 }
 

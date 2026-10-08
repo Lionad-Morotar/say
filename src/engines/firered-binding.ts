@@ -1,3 +1,4 @@
+import { BUILTIN_DAEMON_IDLE } from "../config.ts";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -143,9 +144,9 @@ export function createShimSynth(spec: FireredLabSpec, host: Host): FireredSynth 
  *  engineVersion 与 shim ready 帧字面钉死的 "3" 同源。不符 = 过期 daemon → kill 重拉一次 */
 const DAEMON_PROTOCOL_VERSION = "2";
 const DAEMON_ENGINE_VERSION = "3";
-/** 闲置收割阈值（分钟）：票 03 per-engine 表钉 firered=5（39GB 档内存占用，用完尽快让出）；
- *  由 shim daemon 自计时自退 */
-const DAEMON_IDLE_MINUTES = 5;
+/** 闲置收割缺省档：firered 39GB 档内存占用，用完尽快让出，故取内置表最短档；
+ *  单源在 config 内置表，[daemon] 配置层经装配点覆盖；由 shim daemon 自计时自退 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.firered;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 240s：20.8GB 权重 + MPS 初始化 +
  *  首跑 kernel 编译余量（调研实测 MPS 冷加载 12s 量级），daemon-session 的全局 120s 默认
  *  会在慢盘误杀加载中的健康进程，再降级 per-call 白付双份冷启动 */

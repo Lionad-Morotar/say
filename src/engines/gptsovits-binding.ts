@@ -1,3 +1,4 @@
+import { BUILTIN_DAEMON_IDLE } from "../config.ts";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -122,8 +123,8 @@ const DAEMON_ENGINE_VERSION = "v2";
  * 与 shim 的 QUEUE_FULL_MESSAGE 由源文本对拍测试钉死（shim-daemon.test.ts）。
  */
 export const DAEMON_QUEUE_FULL_MESSAGE = "daemon queue full";
-/** 闲置收割阈值（分钟）：burst 期间常驻保热、久置回收内存；由 shim daemon 自计时自退 */
-const DAEMON_IDLE_MINUTES = 15;
+/** 闲置收割缺省档：单源在 config 内置表（逐引擎裁决值），[daemon] 配置层经装配点覆盖；由 shim daemon 自计时自退 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.gptsovits;
 
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
 export interface GptsovitsDaemonTuning {

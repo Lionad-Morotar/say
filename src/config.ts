@@ -29,7 +29,7 @@ export const DEFAULT_VOICE_KEY = "default";
  */
 export const DEFAULT_RATE_WPM = 175;
 
-const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets"] as const;
+const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets", "daemon"] as const;
 
 /**
  * 内置预设表：voice="default" 关键字按 locale 的零配置落点。
@@ -257,16 +257,116 @@ export function resolveConfig(input: {
   return { config, warnings, needsLocale };
 }
 
+/** 常驻形态可覆盖的引擎集：per-engine daemon 拓扑的四 shim-daemon；其余引擎不受 [daemon] 影响 */
+export type DaemonEngine = "gptsovits" | "indextts" | "firered" | "voxcpm";
+export const DAEMON_ENGINES: readonly DaemonEngine[] = ["gptsovits", "indextts", "firered", "voxcpm"];
+
 /**
- * SAY_DAEMON 逃生门（票 04 形态共存的环境层开关）：off = 常驻形态整体禁用，
- * 请求直接进 per-call——与 daemon 上线前的行为同形；on/缺席/空串 = daemon-first 缺省。
- * 其它值按 on 处理 + 警告：与环境层坏值降级的既有哲学一致（可用性下限是永远能出声，
- * 一个 typo 不该砍掉热启动收益、更不该瘫痪命令）。[daemon] 配置节与 flag>env>config
- * 三层完整优先级是后续切片（蓝图「SAY_DAEMON 解析先行」口径），此处只钉 env 面。
+ * 闲置收割内置缺省表（逐引擎裁决值）：indextts 冷启动最贵取 30min 保温、
+ * firered 39GB 档 5min 尽快让出、gptsovits/voxcpm 默认档 15。bindings 不再各自持有
+ * 局部常量——本表是唯一真源，config [daemon] 逐层覆盖它。
  */
-export function daemonEnabledFromEnv(env: EnvMap): { enabled: boolean; warning: string | null } {
-  const raw = env.SAY_DAEMON;
-  if (raw === undefined || raw === "" || raw === "on") return { enabled: true, warning: null };
-  if (raw === "off") return { enabled: false, warning: null };
-  return { enabled: true, warning: `SAY_DAEMON 只能是 "on" 或 "off"，按 on 处理：${JSON.stringify(raw)}` };
+export const BUILTIN_DAEMON_IDLE: Readonly<Record<DaemonEngine, number>> = {
+  gptsovits: 15,
+  indextts: 30,
+  firered: 5,
+  voxcpm: 15,
+};
+
+/** 引擎工厂消费的 per-engine 投影：三层解析结果按引擎裁剪后的装配输入 */
+export interface DaemonEngineSettings {
+  enabled: boolean;
+  /** 闲置收割分钟（[daemon] 全局/分引擎表或内置表胜出值） */
+  idleMinutes: number;
+}
+
+export interface DaemonSettings {
+  /** 常驻形态总开关的三层胜出值（内置 true < config [daemon].enabled < env SAY_DAEMON） */
+  enabled: boolean;
+  /** per-engine 闲置收割分钟（内置表 < [daemon].idle_minutes 全局 < [daemon.idle] 覆盖） */
+  idleMinutes: Record<DaemonEngine, number>;
+  /** 坏值降级说明：env 与 config 层的非法值各自跳层，不硬失败也不劫持低层 */
+  warnings: string[];
+}
+
+function isPositiveMinutes(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * [daemon] 节三层优先级：沿用 flag > env > config 的既有层序——
+ * daemon 无 flag 层，实际链是 env(SAY_DAEMON) > config([daemon]) > 内置缺省。
+ * 坏值跳层 + 警告（与 pickString 系同一降级哲学：可用性下限是永远能出声，
+ * 一个 typo 不该砍掉热启动收益，更不该劫持用户在下层的明确表态——
+ * 旧版「非法值按 on 处理」在单层形态无层可劫持，三层形态必须改为跳层）。
+ */
+export function resolveDaemonConfig(input: { env: EnvMap; file: ConfigFile | null }): DaemonSettings {
+  const warnings: string[] = [];
+  const rawDaemon = input.file?.daemon;
+  let table: Record<string, unknown> = {};
+  if (rawDaemon !== undefined && rawDaemon !== null) {
+    if (typeof rawDaemon === "object" && !Array.isArray(rawDaemon)) {
+      table = rawDaemon as Record<string, unknown>;
+    } else {
+      warnings.push(`daemon 期望分节表，已忽略：${JSON.stringify(rawDaemon)}`);
+    }
+  }
+
+  let enabled: boolean | null = null;
+  const rawEnv = input.env.SAY_DAEMON;
+  if (rawEnv !== undefined && rawEnv !== "") {
+    if (rawEnv === "on") enabled = true;
+    else if (rawEnv === "off") enabled = false;
+    else warnings.push(`SAY_DAEMON 只能是 "on" 或 "off"，已忽略本层：${JSON.stringify(rawEnv)}`);
+  }
+  if (enabled === null) {
+    if (table.enabled === undefined) enabled = true;
+    else if (typeof table.enabled === "boolean") enabled = table.enabled;
+    else {
+      warnings.push(`daemon.enabled 期望布尔，已忽略：${JSON.stringify(table.enabled)}`);
+      enabled = true;
+    }
+  }
+
+  const idleMinutes: Record<DaemonEngine, number> = { ...BUILTIN_DAEMON_IDLE };
+  if (table.idle_minutes !== undefined) {
+    if (isPositiveMinutes(table.idle_minutes)) {
+      for (const engine of DAEMON_ENGINES) idleMinutes[engine] = table.idle_minutes;
+    } else {
+      warnings.push(`daemon.idle_minutes 期望正数分钟，已忽略：${JSON.stringify(table.idle_minutes)}`);
+    }
+  }
+  if (table.idle !== undefined) {
+    if (typeof table.idle === "object" && table.idle !== null && !Array.isArray(table.idle)) {
+      for (const [name, value] of Object.entries(table.idle as Record<string, unknown>)) {
+        if (!(DAEMON_ENGINES as readonly string[]).includes(name)) {
+          warnings.push(`daemon.idle.${name} 不是常驻形态引擎，已忽略`);
+          continue;
+        }
+        if (isPositiveMinutes(value)) {
+          idleMinutes[name as DaemonEngine] = value;
+        } else {
+          warnings.push(`daemon.idle.${name} 期望正数分钟，已忽略：${JSON.stringify(value)}`);
+        }
+      }
+    } else {
+      warnings.push(`daemon.idle 期望分节表，已忽略：${JSON.stringify(table.idle)}`);
+    }
+  }
+
+  return { enabled, idleMinutes, warnings };
+}
+
+/**
+ * 单引擎的 daemon 装配视角：三层解析结果按引擎投影成 {enabled, idleMinutes}。
+ * 装配点（引擎工厂）在未收到接线层注入时用 env-only 回退——与 daemon 上线前
+ * 的 env 逃生门行为逐字等价，测试与直接装配的调用方零改动。
+ */
+export function daemonForEngine(input: {
+  env: EnvMap;
+  file: ConfigFile | null;
+  engine: DaemonEngine;
+}): { enabled: boolean; idleMinutes: number; warnings: string[] } {
+  const resolved = resolveDaemonConfig(input);
+  return { enabled: resolved.enabled, idleMinutes: resolved.idleMinutes[input.engine], warnings: resolved.warnings };
 }

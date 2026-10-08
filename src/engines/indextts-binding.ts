@@ -1,3 +1,4 @@
+import { BUILTIN_DAEMON_IDLE } from "../config.ts";
 import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import { decodePcm, encodeRequest, parseLine } from "./gptsovits-protocol.ts";
@@ -132,9 +133,9 @@ export function createShimSynth(spec: IndexttsLabSpec, host: Host): IndexttsSynt
  *  engineVersion 与 shim ready 帧字面钉死的 "2.5" 同源。不符 = 过期 daemon → kill 重拉一次 */
 const DAEMON_PROTOCOL_VERSION = "2";
 const DAEMON_ENGINE_VERSION = "2.5";
-/** 闲置收割阈值（分钟）：票 03 per-engine 表钉 indextts=30（zh 默认链高频 + 冷启动最贵 23s，
- *  burst 保温收益最大），与 gptsovits 的 15 档不同源；由 shim daemon 自计时自退 */
-const DAEMON_IDLE_MINUTES = 30;
+/** 闲置收割缺省档：zh 默认链高频 + 冷启动最贵，burst 保温收益最大，故取内置表最长档；
+ *  单源在 config 内置表，[daemon] 配置层经装配点覆盖；由 shim daemon 自计时自退 */
+const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.indextts;
 /** daemon 加载窗与 per-call READY_TIMEOUT_MS 同口径 240s：5GB 权重 + MPS 初始化 + auto 层首跑自拉
  *  余量（实测首跑 76.7s），daemon-session 的全局 120s 默认是 gptsovits 12s 加载的十倍余量、
  *  不覆盖 indextts 首跑形态，误杀加载中的健康进程再降级 per-call 白付双份冷启动 */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ENGINE, DEFAULT_RATE_WPM, parseConfigFile, resolveConfig } from "../src/config.ts";
+import { DEFAULT_ENGINE, DEFAULT_RATE_WPM, daemonForEngine, parseConfigFile, resolveConfig, resolveDaemonConfig } from "../src/config.ts";
 
 const DEFAULTS = {
   engine: DEFAULT_ENGINE,
@@ -259,5 +259,91 @@ describe("resolveConfig：flag > env > config > 默认", () => {
       expect(resolveConfig({ env: {}, file: null, flags: { voice: "default" }, locale: "zh" }).needsLocale).toBe(false);
       expect(resolveConfig({ env: {}, file: { voice: "frieren" }, flags: {} }).needsLocale).toBe(false);
     });
+  });
+});
+
+describe("resolveDaemonConfig：[daemon] 节三层优先级（内置 < config < env，无 flag 层）", () => {
+  const BUILTIN_IDLE = { gptsovits: 15, indextts: 30, voxcpm: 15, firered: 5 } as const;
+
+  it("三层全空：daemon 默认开启 + 内置 per-engine idle 表（票 03 裁决值）", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: null });
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.idleMinutes).toEqual(BUILTIN_IDLE);
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("config [daemon] enabled=false 持久关闭（三层中的 config 层）", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: { daemon: { enabled: false } } });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("env SAY_DAEMON=off 压过 config enabled=true；on 压过 config enabled=false（票 05 三层沿袭）", () => {
+    expect(resolveDaemonConfig({ env: { SAY_DAEMON: "off" }, file: { daemon: { enabled: true } } }).enabled).toBe(false);
+    expect(resolveDaemonConfig({ env: { SAY_DAEMON: "on" }, file: { daemon: { enabled: false } } }).enabled).toBe(true);
+  });
+
+  it("SAY_DAEMON 非法值跳层不劫持：config 层照常胜出 + 警告", () => {
+    const resolved = resolveDaemonConfig({ env: { SAY_DAEMON: "banana" }, file: { daemon: { enabled: false } } });
+    expect(resolved.enabled).toBe(false); // 非法 env 不参与层胜（pick 系坏值降级哲学）
+    expect(resolved.warnings.join("\n")).toContain("SAY_DAEMON");
+  });
+
+  it("config [daemon].idle_minutes 全局覆盖内置表", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: { daemon: { idle_minutes: 20 } } });
+    expect(resolved.idleMinutes).toEqual({ gptsovits: 20, indextts: 20, voxcpm: 20, firered: 20 });
+  });
+
+  it("[daemon.idle] per-engine 表只改点名的引擎", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: { daemon: { idle: { indextts: 60 } } } });
+    expect(resolved.idleMinutes).toEqual({ ...BUILTIN_IDLE, indextts: 60 });
+  });
+
+  it("全局与 per-engine 表同时在场：per-engine 胜出自全局档", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: { daemon: { idle_minutes: 20, idle: { firered: 2 } } } });
+    expect(resolved.idleMinutes).toEqual({ gptsovits: 20, indextts: 20, voxcpm: 20, firered: 2 });
+  });
+
+  it("config 坏值降级不瘫痪：非正数/非布尔/未知引擎键忽略并警告，其余键照常生效", () => {
+    const resolved = resolveDaemonConfig({
+      env: {},
+      file: { daemon: { enabled: "yes", idle_minutes: -3, idle: { firered: "soon", sherpa: 10 } } },
+    });
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.idleMinutes).toEqual(BUILTIN_IDLE);
+    const warnText = resolved.warnings.join("\n");
+    expect(warnText).toContain("daemon.enabled");
+    expect(warnText).toContain("idle_minutes");
+    expect(warnText).toContain("sherpa");
+  });
+
+  it("[daemon] enabled=false 时 idle 仍解析：配置维度各自独立，不因开关短路", () => {
+    const resolved = resolveDaemonConfig({ env: {}, file: { daemon: { enabled: false, idle: { firered: 8 } } } });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.idleMinutes.firered).toBe(8);
+  });
+});
+
+describe("parseConfigFile：[daemon] 与 [daemon.idle] 分节原样读出", () => {
+  it("已知顶层键 + daemon 分节共存读出", () => {
+    const text = [
+      'engine = "indextts"',
+      "[daemon]",
+      "enabled = false",
+      "idle_minutes = 20",
+      "[daemon.idle]",
+      "firered = 2",
+    ].join("\n");
+    expect(parseConfigFile(text)).toEqual({
+      ok: true,
+      value: { engine: "indextts", daemon: { enabled: false, idle_minutes: 20, idle: { firered: 2 } } },
+    });
+  });
+});
+
+describe("daemonForEngine：三层结果按引擎投影成装配输入", () => {
+  it("取总开关与本引擎 idle 档，未知层输入走内置表", () => {
+    expect(daemonForEngine({ env: {}, file: { daemon: { idle: { gptsovits: 1 } } }, engine: "gptsovits" })).toEqual({ enabled: true, idleMinutes: 1, warnings: [] });
+    expect(daemonForEngine({ env: { SAY_DAEMON: "off" }, file: null, engine: "indextts" })).toEqual({ enabled: false, idleMinutes: 30, warnings: [] });
   });
 });

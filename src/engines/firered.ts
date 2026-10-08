@@ -5,7 +5,7 @@ import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../ty
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf, type CloneVoiceSpec } from "../voices.ts";
 import { createFireredSynth, createShimSynth, type FireredDaemonTuning, type FireredLabSpec, type FireredSynth } from "./firered-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
-import { daemonEnabledFromEnv } from "../config.ts";
+import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
 
 export const FIRERED_ENGINE = "firered";
 
@@ -89,6 +89,8 @@ export interface FireredEngineOptions {
   synth?: FireredSynth;
   /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
   daemon?: FireredDaemonTuning;
+  /** 接线层（main）注入的三层解析投影；缺省 env-only 回退——与 daemon 上线前接线等价 */
+  daemonSettings?: DaemonEngineSettings;
 }
 
 /**
@@ -109,11 +111,19 @@ export function createFireredEngine(options: FireredEngineOptions): EngineAdapte
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/firered-shim.py", import.meta.url)),
   };
 
-  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
-  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
-  const daemonGate = daemonEnabledFromEnv(host.env);
-  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
-  const synth = options.synth ?? (daemonGate.enabled ? createFireredSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
+  // 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），合成面退回
+  // daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级。
+  // 三层输入（内置 < config < env）：接线层注入 daemonSettings，测试与直接装配走 env-only 回退
+  const gate =
+    options.daemonSettings ??
+    (() => {
+      const r = daemonForEngine({ env: host.env, file: null, engine: FIRERED_ENGINE });
+      for (const w of r.warnings) host.writeStderr(`${w}\n`);
+      return { enabled: r.enabled, idleMinutes: r.idleMinutes };
+    })();
+  const synth =
+    options.synth ??
+    (gate.enabled ? createFireredSynth(spec, host, { ...options.daemon, idleMinutes: options.daemon?.idleMinutes ?? gate.idleMinutes }) : createShimSynth(spec, host));
 
   /** default 嗓参考：v1 官方 prompt_2（manifest prompts/ 条目分发），转写与音频同源钉死 */
   const defaultRequirement = (): { audioPath: string; promptText: string } => ({
