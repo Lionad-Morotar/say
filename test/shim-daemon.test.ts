@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { startFakeDaemon } from "./daemon-fakes.ts";
 import { DAEMON_QUEUE_FULL_MESSAGE } from "../src/engines/gptsovits-binding.ts";
+import { BUILTIN_DAEMON_IDLE } from "../src/config.ts";
 
 /**
  * Python shim daemon 服务循环的真实现场测试：用系统 python3 直接跑 shim --daemon。
@@ -249,5 +250,12 @@ describe("shim --daemon 活体竞态与队列容量（假引擎桩）", () => {
     const m = /QUEUE_FULL_MESSAGE = "([^"]+)"/.exec(py);
     expect(m).not.toBeNull();
     expect(m?.[1]).toBe(DAEMON_QUEUE_FULL_MESSAGE);
+  });
+
+  it("idle 收割缺省档跨语言对拍：shim --idle-minutes 缺省字面量 = config 内置表（手动拉起 daemon 与产品面档位不许静默分叉）", () => {
+    const py = readFileSync(SHIM, "utf8");
+    const m = /--idle-minutes", type=float, default=([\d.]+)/.exec(py);
+    expect(m).not.toBeNull();
+    expect(Number(m?.[1])).toBe(BUILTIN_DAEMON_IDLE.gptsovits);
   });
 });
