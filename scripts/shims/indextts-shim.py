@@ -77,6 +77,35 @@ def weights_fingerprint(lab_dir: str) -> str:
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 
+def load_engine_with_fastload(repo: str, report) -> object:
+    """两形态共享的引擎装载装配：repo 入 sys.path → import 引擎模块 → 装 fastload patch。
+
+    回落面精确为 install 装配窗口：patch 本体异常不阻断出声（回落未打补丁的原始加载）。
+    打补丁后的类在构造期抛异常不在回落面内——回退重试需要还原属性表与全局 torch.load
+    的干净命名空间（Python reload 语义不可靠）；该风险面由钉版安装（uv.lock）+ S4 验收
+    套件（真引擎整构造路径的合成与红测用例）在升级当场拦截，失声形态走三级降级的系统嗓出口。
+    applied 结果经 report 打自报行，落 daemon.log 或 stderr
+    （取证锚点：被测运行时自报，非外部期望）。返回引擎模块对象（IndexTTS2 从其属性取——
+    patch 换的正是这份属性表）。
+    """
+    repo = os.path.abspath(repo)
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    import indextts.infer_v2_5 as engine_mod
+
+    try:
+        import indextts_fastload
+
+        info = indextts_fastload.install_fast_load_patch(engine_mod)
+    except Exception as e:  # noqa: BLE001 — 装配失败回落原始加载，出声优先
+        info = {"applied": False, "reason": f"install-failed: {type(e).__name__}: {e}", "patched": []}
+    report(
+        f"[fastload] applied={info['applied']} "
+        f"patched={','.join(info['patched']) if info['patched'] else '-'} reason={info['reason']}"
+    )
+    return engine_mod
+
+
 def serve_daemon(args) -> int:
     """常驻服务形态：unix socket 先 bind 再加载模型，帧走 socket（协议面与 per-call 逐字一致）。
 
@@ -284,13 +313,11 @@ def serve_daemon(args) -> int:
 
     def load_engine() -> None:
         try:
-            if args_repo not in sys.path:
-                sys.path.insert(0, args_repo)
-            from indextts.infer_v2_5 import IndexTTS2
+            engine_mod = load_engine_with_fastload(args_repo, log)
 
             # use_bf16 关闭沿用 per-call 既有裁决（MPS 强制 fp32，作者注 bf16 更慢）；
             # device 缺省走引擎自动检测（cuda→xpu→mps→cpu，M3 Max 落 mps）
-            model = IndexTTS2(cfg_path=os.path.join(args.models, "config.yaml"), model_dir=args.models)
+            model = engine_mod.IndexTTS2(cfg_path=os.path.join(args.models, "config.yaml"), model_dir=args.models)
             engine_info["model"] = model
             engine_info["ready"] = {
                 "type": "ready",
@@ -365,13 +392,13 @@ def main() -> int:
         protocol.flush()
 
     try:
-        if args.repo not in sys.path:
-            sys.path.insert(0, args.repo)
-        from indextts.infer_v2_5 import IndexTTS2
+        # 自报行进 stderr：协议通道是 dup 出的 fd1，sys.stdout 已整体改道，引擎 print 与
+        # fastload 归因同流，不污染协议面
+        engine_mod = load_engine_with_fastload(args.repo, lambda msg: print(msg, file=sys.stderr, flush=True))
 
         # use_bf16 关闭：调研实证 MPS 强制 fp32（作者注释 bf16 在 MPS 更慢）；
         # device 缺省走引擎自动检测（cuda→xpu→mps→cpu，M3 Max 落 mps）
-        model = IndexTTS2(cfg_path=os.path.join(args.models, "config.yaml"), model_dir=args.models)
+        model = engine_mod.IndexTTS2(cfg_path=os.path.join(args.models, "config.yaml"), model_dir=args.models)
         emit({
             "type": "ready",
             "engine": "indextts",
