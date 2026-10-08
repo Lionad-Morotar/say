@@ -94,6 +94,24 @@ export const FIRERED_WEIGHT_MARKERS: readonly string[] = [
 ];
 
 /**
+ * VoxCPM 权重面投影：manifest VOXCPM.weights 的 7 件文件级 size+mtime（models/ 全部）。
+ * 无 default 资产嗓投影——voxcpm 的 default 嗓是 control 文本形态（无 prompt wav 资产），
+ * 与 firered/indextts 把参考资产纳入清单的形态天然不同，不是遗漏。
+ * 与 shim 侧 WEIGHT_MARKERS 逐条一致，由 test/daemon-fingerprint.test.ts 双实现对拍钉死；
+ * manifest 增删两处同改。config.json 在列：architecture 漂移（换模型代际）必同时击穿
+ * 指纹与 ready.version 运行时类名，握手拒载双路自兜。
+ */
+export const VOXCPM_WEIGHT_MARKERS: readonly string[] = [
+  "models/model.safetensors",
+  "models/audiovae.pth",
+  "models/config.json",
+  "models/tokenizer.json",
+  "models/tokenizer_config.json",
+  "models/special_tokens_map.json",
+  "models/tokenization_voxcpm2.py",
+];
+
+/**
  * 权重指纹：对 marker 清单（rel 路径升序）逐条取 `rel|size|mtime_ms`（stat 失败记 `rel|missing|0`），
  * 换行连接后 sha256 hex。与 Python shim 的同名实现必须逐字节一致——
  * 跨语言公式漂移会让每次握手失败、静默永久降级 per-call，故由对拍测试钉死（daemon-fingerprint.test.ts）。
