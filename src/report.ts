@@ -27,12 +27,14 @@ export function fail(host: Host, message: string): number {
 /**
  * SAY_DEBUG daemon 段（热启动）：把 daemon-trace 记的形态拼进摘要。
  * 词表 warm|cold(Xs)|per-call|cooldown|off 按蓝图钉死。
+ * 形态按「路由到的引擎」查而非 outcome.engineName：回退到系统嗓后 engineName 已是 system，
+ * 而形态记在被尝试的引擎名下——按 engineName 查会把「走过 daemon 层但降级了」一并抹掉。
  * 非 daemon 引擎（sherpa/system/zipvoice）无记账，整段省略——不写 daemon=n/a，
  * 让 grep daemon= 天然只命中四 shim-daemon 引擎的调用。
  * cold 的 Xs = 本调用实付加载窗（秒，一位小数），其余形态不带耗时。
  */
-function daemonSegment(engineName: string): string {
-  const trace = daemonFormOf(engineName);
+function daemonSegment(routedEngine: string): string {
+  const trace = daemonFormOf(routedEngine);
   if (trace === null) return "";
   if (trace.form === "cold") {
     // 半进位走整数域：6.35 存成 6.3499…，直接 (ms/1000).toFixed(1) 会系统性舍出 6.3
@@ -50,11 +52,12 @@ export function writeDebug(
   voice: string | null,
   chunks: number,
   timing: Timing,
+  routedEngine: string,
 ): void {
   if (!config.debug) return;
   const total = Math.round(host.now() - timing.started);
   host.writeStderr(
-    `say: debug: engine=${outcome.engineName}${daemonSegment(outcome.engineName)} voice=${voice ?? "default"} chunks=${chunks} ` +
+    `say: debug: engine=${outcome.engineName}${daemonSegment(routedEngine)} voice=${voice ?? "default"} chunks=${chunks} ` +
       `synth=${Math.round(timing.synth)}ms play=${Math.round(timing.play)}ms total=${total}ms\n`,
   );
 }

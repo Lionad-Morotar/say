@@ -6,9 +6,13 @@ import { PassThrough } from "node:stream";
 import { createDefaultRegistry } from "../src/engines/index.ts";
 import { GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 import { daemonFormOf, resetDaemonTrace } from "../src/daemon-trace.ts";
+import { resolvePaths } from "../src/paths.ts";
+import { run } from "../src/speak.ts";
 import type { ConfigFile } from "../src/types.ts";
 import { createFakeHost, type FakeDaemonHandle } from "./fake-host.ts";
 import { readyFrame, startFakeDaemon, type FakeDaemon } from "./daemon-fakes.ts";
+
+const SAY = "/usr/bin/say";
 
 /**
  * [daemon] 三层的接线面验收：resolveDaemonConfig 是纯函数，工厂回退是 env-only——
@@ -199,6 +203,40 @@ describe("createDefaultRegistry daemon 接线（config 层在真链路生效）"
       expect(out.sampleRate).toBe(24000);
       expect(fake.daemons[0]!.args).toContain("--daemon"); // 首选形态确实是常驻 daemon
       expect(daemonFormOf("gptsovits")).toEqual({ form: "per-call", coldMs: null });
+    });
+  });
+
+  it("daemon 与 per-call 双双失败退系统嗓：daemon= 段按被尝试的引擎渲染，engine=system 不掩盖降级事实", async () => {
+    await withTempDataHome(async (dataDir, labDir) => {
+      // 引擎可用性八件套：isAvailable 过关才会走到合成层，daemon 与 per-call 的失败才落得下形态
+      const repo = join(labDir, "GPT-SoVITS");
+      const labAssets = {
+        [`${labDir}/venv/bin/python`]: "",
+        [`${repo}/GPT_SoVITS/TTS_infer_pack/TTS.py`]: "",
+        [`${repo}/GPT_SoVITS/pretrained_models/.install-ok`]: "",
+        [`${repo}/GPT_SoVITS/text/G2PWModel/.install-ok`]: "",
+        [`${labDir}/open_jtalk_dic_utf_8-1.11/.install-ok`]: "",
+        [`${labDir}/venv/nltk_data/tokenizers/punkt_tab/.install-ok`]: "",
+        [`${labDir}/venv/nltk_data/taggers/averaged_perceptron_tagger_eng/.install-ok`]: "",
+        [`${labDir}/venv/nltk_data/corpora/cmudict/.install-ok`]: "",
+      };
+      // daemonFactory 恒 null：--daemon 拉起即败退 per-call，per-call 拉起亦败 → 系统嗓兜底。
+      // 观测面要证明的是「形态记在被尝试的引擎名下」不被最终 engine=system 抹掉
+      const fake = createFakeHost({
+        env: { HOME: "/h", XDG_DATA_HOME: dataDir, SAY_ENGINE: "gptsovits", SAY_DEBUG: "1" },
+        files: { [SAY]: "", ...engineFiles, ...labAssets },
+        daemonFactory: () => null,
+      });
+      const code = await run(["你好"], {
+        host: fake.host,
+        paths: resolvePaths(fake.host.env),
+        registry: createDefaultRegistry(fake.host, { daemonFile: null }),
+        sayBin: SAY,
+      });
+      expect(code).toBe(0); // 系统嗓兜底出声，出过声即 0
+      const line = fake.stderr.join("").split("\n").find((row) => row.startsWith("say: debug:")) ?? "";
+      expect(line).toContain("engine=system");
+      expect(line).toContain("daemon=per-call"); // 按 outcome.engineName(system) 查会漏掉本段
     });
   });
 
