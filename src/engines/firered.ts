@@ -3,8 +3,9 @@ import { EngineError } from "../errors.ts";
 import type { Host } from "../host.ts";
 import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../types.ts";
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf, type CloneVoiceSpec } from "../voices.ts";
-import { createShimSynth, type FireredLabSpec, type FireredSynth } from "./firered-binding.ts";
+import { createFireredSynth, createShimSynth, type FireredDaemonTuning, type FireredLabSpec, type FireredSynth } from "./firered-binding.ts";
 import { detectTextLang } from "./gptsovits.ts";
+import { daemonEnabledFromEnv } from "../config.ts";
 
 export const FIRERED_ENGINE = "firered";
 
@@ -84,8 +85,10 @@ export interface FireredEngineOptions {
   voicesDir: string;
   /** shim 脚本路径；缺省按仓内 scripts/shims/ 定位，测试注入假路径 */
   shimPath?: string;
-  /** 合成函数：缺省走真实 shim 会话，测试注入 fake */
+  /** 合成函数：缺省走 daemon-first 常驻会话（降级 per-call），测试注入 fake 绕开进程面 */
   synth?: FireredSynth;
+  /** 常驻 daemon 计时与闲置阈值覆写：真机缺省，测试收窗（默认接线下的快测通道） */
+  daemon?: FireredDaemonTuning;
 }
 
 /**
@@ -106,7 +109,11 @@ export function createFireredEngine(options: FireredEngineOptions): EngineAdapte
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/firered-shim.py", import.meta.url)),
   };
 
-  const synth = options.synth ?? createShimSynth(spec, host);
+  // SAY_DAEMON 逃生门在装配点落闸：off 时根本不装配 daemon 会话（连 warm 直连都不做），
+  // 合成面退回 daemon 上线前的 per-call 单形态——门是形态选择，不是失败降级
+  const daemonGate = daemonEnabledFromEnv(host.env);
+  if (daemonGate.warning !== null) host.writeStderr(`${daemonGate.warning}\n`);
+  const synth = options.synth ?? (daemonGate.enabled ? createFireredSynth(spec, host, options.daemon ?? {}) : createShimSynth(spec, host));
 
   /** default 嗓参考：v1 官方 prompt_2（manifest prompts/ 条目分发），转写与音频同源钉死 */
   const defaultRequirement = (): { audioPath: string; promptText: string } => ({
