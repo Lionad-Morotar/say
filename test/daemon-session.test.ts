@@ -280,6 +280,45 @@ s.bind(p);s.listen(1);print("ok",flush=True);import time;time.sleep(30)`,
       await h.cleanup();
     }
   });
+
+  it("sock 由『已 bind 未 listen』的活体持有（探测收拒连）：退避重探后复用，不 unlink 赢家注册点、不误拉起", async () => {
+    // bind→listen 间隙被拉长到 150ms：窗口内 connect 与真残file同收 ECONNREFUSED。
+    // 退避 300ms 后重探，赢家已 listen → 复用；若退避窗覆盖不到间隙（等价旧行为）会误判残file摘注册点。
+    const h = new Harness({ refusedRetryDelayMs: 300 });
+    try {
+      const winner = spawn("python3", [
+        "-c",
+        `import socket,os,time,json
+p=${JSON.stringify(h.sockPath)}
+try: os.remove(p)
+except OSError: pass
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.bind(p)
+print("bound",flush=True)
+time.sleep(0.15)
+s.listen(16)
+c,_=s.accept()
+c.sendall((json.dumps({"type":"ready","engine":"gptsovits","version":"v2","device":"cpu","protocol":"2","weights_fingerprint":"fp-current"})+"\\n").encode())
+time.sleep(30)`,
+      ]);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("python 赢家未在 2s 内 bind（子进程异常？）")), 2000);
+          winner.stdout!.once("data", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        await h.session.ensure();
+        expect(existsSync(h.sockPath)).toBe(true); // 赢家注册点分毫未动（未被误摘）
+        expect(h.spawns).toHaveLength(0); // 未误判残file触发拉起
+      } finally {
+        winner.kill("SIGKILL");
+      }
+    } finally {
+      await h.cleanup();
+    }
+  });
 });
 
 describe("DaemonSession.ensure：lazy 拉起编排", () => {

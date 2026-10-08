@@ -168,6 +168,12 @@ export interface DaemonSessionOptions {
   /** lazy 轮询可连的间隔 */
   pollIntervalMs?: number;
   /**
+   * refused（ECONNREFUSED）后的退避重探毫秒数。bind 先于 listen 的赢家在同一探测面也收拒连，
+   * 与真残file不可分辨；退避一次覆盖该微秒级间隙再判残file，避免摘掉活体赢家的注册点。
+   * 与 shim 侧 bind 仲裁的退避同形（两处都防「并发拉起误删活体注册点」）。
+   */
+  refusedRetryDelayMs?: number;
+  /**
    * 故障熔断句柄（daemon-failures 文件）：markUnavailable 是所有基础设施失败的收敛咽喉，
    * 计数在此计入；off 与冷却直拒不走 markUnavailable 故不计数（容量事件与跳过不是劣化证据）。
    * 缺席则纯内存 sticky，跨进程闸由上层装配决定开不开。
@@ -188,13 +194,15 @@ interface ResolvedOptions extends DaemonSessionOptions {
   warmTimeoutMs: number;
   requestTimeoutMs: number;
   pollIntervalMs: number;
+  refusedRetryDelayMs: number;
 }
 
-const DEFAULTS: Pick<ResolvedOptions, "readyTimeoutMs" | "warmTimeoutMs" | "requestTimeoutMs" | "pollIntervalMs"> = {
+const DEFAULTS: Pick<ResolvedOptions, "readyTimeoutMs" | "warmTimeoutMs" | "requestTimeoutMs" | "pollIntervalMs" | "refusedRetryDelayMs"> = {
   readyTimeoutMs: 120_000,
   warmTimeoutMs: 5_000,
   requestTimeoutMs: 60_000,
   pollIntervalMs: 200,
+  refusedRetryDelayMs: 50,
 };
 
 /**
@@ -378,9 +386,9 @@ export class DaemonSession {
       // 轮内共享预算：可连轮询与 ready 握手合计不超 readyTimeoutMs（两段各自满额会让
       // bind 即成但 ready 永不到场的僵死 daemon 静默挂近 2×120s，远超文档口径）
       const roundStart = Date.now();
-      const connect = await this.tryConnect();
+      const connect = await this.tryConnectRefusedRetry();
       if (connect === "refused") {
-        await unlinkQuiet(this.opts.socketPath); // 残file无人监听：挡 bind 也挡复用，清掉转拉起
+        await unlinkQuiet(this.opts.socketPath); // 退避重探后仍拒连 = 真残file：挡 bind 也挡复用，清掉转拉起
         socket = "need-spawn";
       } else if (connect === "absent") {
         socket = "need-spawn";
@@ -467,9 +475,9 @@ export class DaemonSession {
       if (connect !== "absent" && connect !== "refused") {
         return { socket: connect, loser: loserSeen };
       }
-      if (connect === "refused") {
-        await unlinkQuiet(this.opts.socketPath); // bind 与残file竞态窗口：清掉继续等
-      }
+      // refused 不 unlink：这里的对面要么是本次 spawn 的 shim 自身 bind→listen 间隙（摘它等于摘
+      // 自己刚建的注册点），要么是 shim 尚在退避窗内的旧残file——两种清理职责都归 shim 的 bind 仲裁，
+      // Node 侧动手会误伤在位者。轮询下一拍即可连上。
       if (loserSeen) {
         await delay(this.opts.pollIntervalMs); // 输家句柄已退场，没有再对赌的死亡信号，轮询自带节流
       } else {
@@ -553,7 +561,7 @@ export class DaemonSession {
     socket.unref(); // 握手完成即归还事件循环：request 期再 ref
   }
 
-  /** 连接错误语义分类：ENOENT=缺席可拉起；拒连=残file；其余按缺席保守转拉起 */
+  /** 连接错误语义分类：ENOENT=缺席可拉起；拒连=可能残file也可能 bind 后未 listen 的活体；其余按缺席保守转拉起 */
   private tryConnect(): Promise<net.Socket | "absent" | "refused"> {
     return new Promise((resolve) => {
       const sock = net.connect(this.opts.socketPath);
@@ -567,6 +575,18 @@ export class DaemonSession {
         resolve(code === "ECONNREFUSED" ? "refused" : "absent");
       });
     });
+  }
+
+  /**
+   * refused 后退避重探一次：bind 先于 listen 的赢家在探测面同样收 ECONNREFUSED，与真残file
+   * 不可分辨。退避一次覆盖该微秒级间隙——重探可连即复用赢家（不 unlink 不拉起），
+   * 仍拒连才按残file清理。与 shim 侧 bind 仲裁同形。
+   */
+  private async tryConnectRefusedRetry(): Promise<net.Socket | "absent" | "refused"> {
+    const first = await this.tryConnect();
+    if (first !== "refused") return first;
+    await delay(this.opts.refusedRetryDelayMs);
+    return this.tryConnect();
   }
 
   private attachSocket(socket: net.Socket): void {
