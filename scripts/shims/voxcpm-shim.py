@@ -174,12 +174,29 @@ def serve_daemon(args) -> int:
             raise
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         probe.settimeout(0.5)
+        alive = False
         try:
             probe.connect(sock_path)
-            log("已有活体 daemon 在位，本次拉起退出（exit 3）")
-            return 3
-        except OSError:
+            alive = True
+        except ConnectionRefusedError:
+            # bind→listen 间隙：赢家已 bind 未 listen 时 connect 在探测面同样收拒连，与真残file
+            # 不可分辨——退避 ~50ms 重试一次覆盖该间隙，仍拒连才按残file清理
             probe.close()
+            time.sleep(0.05)
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(0.5)
+            try:
+                probe.connect(sock_path)
+                alive = True
+            except OSError:
+                pass
+        except OSError:
+            pass
+        if alive:
+            log("已有活体 daemon 在位，本次拉起退出（exit 3）")
+            probe.close()
+            return 3
+        probe.close()
         os.remove(sock_path)
         try:
             server.bind(sock_path)
