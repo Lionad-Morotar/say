@@ -17,16 +17,37 @@ say/
 │   └── lib/                 # 脚本共享库（含 node:test 单测 *.test.mjs）
 ├── bench/                   # 跑分器（.mjs）
 │   └── lib/                 # 跑分逻辑（engines/ 为各引擎跑分通道）
+├── packages/                # pnpm workspace 子包
+│   └── playground/          # 嗓音工作台（Nuxt 4 App，试听矩阵/活体合成/盲听裁决）
 ├── types/                   # 第三方模块类型补充（手写 .d.ts）
-├── docs/                    # 项目文档（blueprints/reports/reviews/tdd/research）
+├── docs/                    # 项目文档（blueprints/reports/reviews/tdd/research/audition）
 ├── zRefs/                   # 调试参考区（第三方源码 symlink、probe 探针，不进 git）
 ├── .nsl/                    # 编排状态与切片 changelog（gitignore）
 ├── .flow/                   # flow 工具元数据（meta.yml）
 ├── .vscode/                 # 编辑器配置
-├── package.json             # bin: say → ./bin/say；scripts: test / typecheck
+├── package.json             # bin: say → ./bin/say；scripts: test / typecheck / dev:playground
+├── pnpm-workspace.yaml      # packages: [packages/*] + allowBuilds（esbuild）
 ├── tsconfig.json            # noEmit、strict 全开、allowImportingTsExtensions
 └── vitest.config.ts         # include: test/**/*.test.ts，HOME 隔离防接缝泄漏
 ```
+
+### `packages/playground/` — 嗓音工作台子包（Nuxt 4）
+
+试听矩阵从一次性 report HTML 进化为唯一交互面；裁决数据以 JSON+wav 落 `docs/audition/<YYMMDD>/`，不再产 report HTML。
+
+```
+packages/playground/
+├── nuxt.config.ts           # ssr:false； Nitro 自动导入（server 路由不写 h3 import）
+├── shared/blind.ts          # app/server 共用纯函数（无 node 依赖，防 bundle 污染）
+├── server/lib/              # auditions（manifest 解析/档期聚合）、say-bridge（活体合成 + SAY_DEBUG 归因）、verdicts（裁决落档，串行锁原子追加）
+├── server/api/              # auditions / synthesize / verdicts 路由
+├── app/components/          # VoiceMatrix、MatrixPlayer、SynthConsole、BlindTest、VerdictHistory
+├── app/pages/index.vue      # 六区布局：档期/矩阵/播放器/合成台/盲听/历史
+└── test/                    # vitest（manifest-parity 对拍、组件、API 面）
+```
+
+- 活体合成桥：spawn `node bin/say -- SAY_DEBUG=1`，stderr 的 `say: debug:` 行是引擎归因唯一通道；`--` 分隔防 `-` 开头文本触发透传分支
+- `docs/audition/<YYMMDD>/`：`manifest.json`（261007 起历史矩阵）+ `verdicts.json` + `audio/live-*.wav`（盲听活体证据，tracked）
 
 ## 目录职责详解
 
