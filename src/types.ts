@@ -102,6 +102,8 @@ export interface ConfigFile {
   presets?: unknown;
   /** `[daemon]` 分节原样（enabled/idle_minutes/[daemon.idle]），类型校验在 resolveDaemonConfig */
   daemon?: unknown;
+  /** `[gptsovits]` 分节原样（version 模型版本档位），类型校验在 resolveGptsovitsVersion */
+  gptsovits?: unknown;
 }
 
 export interface FlagOverrides {

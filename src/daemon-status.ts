@@ -160,8 +160,10 @@ export function probeDaemonSock(sockPath: string, timeoutMs = 2_000): Promise<So
  * - ready 等待只给短预算（缺省 2s）：真加载中的 daemon 由「pid 龄 < 引擎加载窗」判 loading，
  *   绝不在 ls 里等满 240s——ls 的耗时上限是秒级承诺；
  * - 版本键比对用 binding 权威投影（含权重指纹磁盘现算）：不符判 stale，kill 重拉归下次合成调用。
+ *   gptsovits 的期望版本随配置档位走（resolveGptsovitsVersion 的胜出值），调用方显式传入——
+ *   观测面自己不解析配置层，缺省 undefined 按绑定缺省 v2 投影。
  */
-export async function probeDaemonStatus(host: Host, engine: DaemonEngine, readyProbeMs = 2_000): Promise<DaemonStatusRow> {
+export async function probeDaemonStatus(host: Host, engine: DaemonEngine, readyProbeMs = 2_000, gptsovitsVersion?: string): Promise<DaemonStatusRow> {
   const { labDir, sockPath, pidPath } = daemonPathsOf(host.env, engine);
   const pid = await readDaemonPid(host, pidPath);
   const alive = pid !== null && isPidAlive(pid);
@@ -191,7 +193,10 @@ export async function probeDaemonStatus(host: Host, engine: DaemonEngine, readyP
     return { ...base, state: "unreachable", note: alive ? "pid 在位但 ready 迟迟不到且龄超加载窗：判僵死，stop 可强收" : "sock 在位但无人应答" };
   }
 
-  const expected = ADMIN[engine].versionKey(labDir);
+  const expected =
+    engine === "gptsovits" && gptsovitsVersion !== undefined
+      ? gptsovitsVersionKey(labDir, gptsovitsVersion)
+      : ADMIN[engine].versionKey(labDir);
   const got = probe.frame;
   const version = typeof got.version === "string" ? got.version : "?";
   const device = typeof got.device === "string" ? got.device : "?";

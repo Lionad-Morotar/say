@@ -95,7 +95,7 @@ test("UV_INDEX 是国内镜像（直连 PyPI 挂死，报告实证）", () => {
   assert.ok(UV_INDEX.includes("tsinghua") || UV_INDEX.includes("aliyun"), UV_INDEX);
 });
 
-test("manifest 与引擎侧判据跨面一致：gptsovits 非 auto 条目的判据路径在 missingAssets 有对应字面量", () => {
+test("manifest 与引擎侧判据跨面一致：gptsovits 非 auto/optional 条目的判据路径在 missingAssets 有对应字面量", () => {
   // 三处消费面同改纪律（install/status/引擎侧 missingAssets）升为测试期拦截：
   // 补清单漏改引擎侧判据时 status 与 isAvailable 出裂缝（S9 审查实证）
   const adapterSource = readFileSync(
@@ -105,9 +105,24 @@ test("manifest 与引擎侧判据跨面一致：gptsovits 非 auto 条目的判�
   // 判据侧的仓库内条目经 spec.repoDir 变量拼接，探针剥掉清单路径的 repoDir 前缀再比对
   const repoPrefix = `${ENGINES.gptsovits.repoDir}/`;
   for (const w of ENGINES.gptsovits.weights) {
-    if (w.tier === "auto") continue;
+    if (w.tier === "auto" || w.tier === "optional") continue; // optional = 版本档可选资产，v2 基线运行面不依赖（判据纳入会把 v2-only 用户误判缺资产）
     const rel = w.file.startsWith(repoPrefix) ? w.file.slice(repoPrefix.length) : w.file;
     const probe = w.archive ? `${rel}/.install-ok` : rel;
     assert.ok(adapterSource.includes(probe), `引擎侧判据缺清单条目 ${probe}（gptsovitsMissingAssets 两处同改）`);
+  }
+});
+
+test("gptsovits v5turbo 档位资产：optional 两件带精确指纹与 hf-mirror 通道", () => {
+  const optional = ENGINES.gptsovits.weights.filter((w) => w.tier === "optional");
+  const files = optional.map((w) => w.file);
+  assert.deepEqual(files, [
+    "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/s2Gv5turbo.pth",
+    "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/vocoder.pth",
+  ]);
+  for (const w of optional) {
+    // optional 是显式安装面：指纹必须精确（install 侧 sizeMatches 依赖它防下载中断残留误判就绪）
+    assert.ok(Number.isInteger(w.size) && w.size > 0, `${w.file} size`);
+    assert.match(w.sha256, /^[0-9a-f]{64}$/, `${w.file} sha256 形态`);
+    assert.ok(w.sources.some((s) => s.net === "hf-mirror"), `${w.file} 至少一条 hf-mirror 通道（ModelScope 无 v5 镜像）`);
   }
 });

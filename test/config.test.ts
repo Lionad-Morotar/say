@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ENGINE, DEFAULT_RATE_WPM, daemonForEngine, parseConfigFile, resolveConfig, resolveDaemonConfig } from "../src/config.ts";
+import { DEFAULT_ENGINE, DEFAULT_RATE_WPM, daemonForEngine, parseConfigFile, resolveConfig, resolveDaemonConfig, resolveGptsovitsVersion } from "../src/config.ts";
 
 const DEFAULTS = {
   engine: DEFAULT_ENGINE,
@@ -345,5 +345,63 @@ describe("daemonForEngine：三层结果按引擎投影成装配输入", () => {
   it("取总开关与本引擎 idle 档，未知层输入走内置表", () => {
     expect(daemonForEngine({ env: {}, file: { daemon: { idle: { gptsovits: 1 } } }, engine: "gptsovits" })).toEqual({ enabled: true, idleMinutes: 1, warnings: [] });
     expect(daemonForEngine({ env: { SAY_DAEMON: "off" }, file: null, engine: "indextts" })).toEqual({ enabled: false, idleMinutes: 30, warnings: [] });
+  });
+});
+
+describe("resolveGptsovitsVersion：[gptsovits] version 档位（内置 v2 < config < env，枚举 v2|v5turbo）", () => {
+  it("三层全空：缺省 v2（ja 默认引擎的现状基线不动）", () => {
+    const resolved = resolveGptsovitsVersion({ env: {}, file: null });
+    expect(resolved.version).toBe("v2");
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("config [gptsovits] version=v5turbo 持久切档", () => {
+    expect(resolveGptsovitsVersion({ env: {}, file: { gptsovits: { version: "v5turbo" } } }).version).toBe("v5turbo");
+  });
+
+  it("env SAY_GPTSOVITS_VERSION 压过 config 层（层序沿袭）", () => {
+    expect(resolveGptsovitsVersion({ env: { SAY_GPTSOVITS_VERSION: "v5turbo" }, file: { gptsovits: { version: "v2" } } }).version).toBe("v5turbo");
+    expect(resolveGptsovitsVersion({ env: { SAY_GPTSOVITS_VERSION: "v2" }, file: { gptsovits: { version: "v5turbo" } } }).version).toBe("v2");
+  });
+
+  it("枚举外版本一律降级 v2 + 警告（v5dev 权重不装机，放行会变成难懂的 shim fatal）", () => {
+    for (const bad of ["v5dev", "v4", "banana"]) {
+      const byEnv = resolveGptsovitsVersion({ env: { SAY_GPTSOVITS_VERSION: bad }, file: null });
+      expect(byEnv.version).toBe("v2");
+      expect(byEnv.warnings.join("\n")).toContain("SAY_GPTSOVITS_VERSION");
+      const byConfig = resolveGptsovitsVersion({ env: {}, file: { gptsovits: { version: bad } } });
+      expect(byConfig.version).toBe("v2");
+      expect(byConfig.warnings.join("\n")).toContain("gptsovits.version");
+    }
+  });
+
+  it("坏值只废本维度：env 坏值时 config 合法值照常胜出（跳层不劫持）", () => {
+    const resolved = resolveGptsovitsVersion({ env: { SAY_GPTSOVITS_VERSION: "v5dev" }, file: { gptsovits: { version: "v5turbo" } } });
+    expect(resolved.version).toBe("v5turbo");
+    expect(resolved.warnings.join("\n")).toContain("SAY_GPTSOVITS_VERSION");
+  });
+
+  it("非字符串 config 值降级 v2 + 警告", () => {
+    const resolved = resolveGptsovitsVersion({ env: {}, file: { gptsovits: { version: 5 } } });
+    expect(resolved.version).toBe("v2");
+    expect(resolved.warnings.join("\n")).toContain("gptsovits.version");
+  });
+
+  it("分节写成行内值（漏方括号）：降级 v2 且对称警告，不静默吞掉切档意图", () => {
+    for (const bad of ["v5turbo", ["v5turbo"]] as unknown[]) {
+      const resolved = resolveGptsovitsVersion({ env: {}, file: { gptsovits: bad } });
+      expect(resolved.version).toBe("v2");
+      expect(resolved.warnings.join("\n")).toContain("期望分节表");
+    }
+  });
+});
+
+describe("parseConfigFile：[gptsovits] 分节原样读出", () => {
+  it("gptsovits 分节与其他已知键共存", () => {
+    const text = ['engine = "gptsovits"', "[gptsovits]", 'version = "v5turbo"'].join("\n");
+    expect(parseConfigFile(text)).toEqual({
+      ok: true,
+      value: { engine: "gptsovits", gptsovits: { version: "v5turbo" } },
+    });
   });
 });

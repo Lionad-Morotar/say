@@ -17,6 +17,8 @@ export interface GptsovitsLabSpec {
   pythonPath: string;
   /** shim 脚本绝对路径（say 仓 scripts/shims/gptsovits-shim.py） */
   shimPath: string;
+  /** 模型版本档位（v2 | v5turbo）：shim --model-version 透传 + daemon 握手 engineVersion 期望；缺省 v2 */
+  modelVersion?: string;
 }
 
 export interface GptsovitsSynthRequest {
@@ -55,9 +57,14 @@ function concatSamples(chunks: readonly Float32Array[]): Float32Array {
   return merged;
 }
 
-/** 会话装配的引擎侧薄壳：spawn 参数与错误消息 label 是 GPT-SoVITS 仅有的特化点 */
+/** 会话装配的引擎侧薄壳：spawn 参数与错误消息 label 是 GPT-SoVITS 仅有的特化点。
+ * --model-version 恒显式携带：daemon.log 与 ps 可观测当前档位，版本漂移不靠 shim 默认值兜 */
+function spawnArgs(spec: GptsovitsLabSpec): string[] {
+  return [spec.shimPath, "--repo", spec.repoDir, "--model-version", spec.modelVersion ?? DAEMON_ENGINE_VERSION];
+}
+
 function spawnSession(spec: GptsovitsLabSpec, host: Host): ShimSession {
-  const proc = host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir]);
+  const proc = host.spawnDaemon(spec.pythonPath, spawnArgs(spec));
   return spawnShimSession(ENGINE_LABEL, proc);
 }
 
@@ -113,7 +120,8 @@ export function createShimSynth(spec: GptsovitsLabSpec, host: Host): GptsovitsSy
 }
 
 /** 握手版本键的引擎侧期望：protocol 与 shim PROTOCOL_VERSION 同仓同版（漂移只发生在旧代码拉起的旧 daemon，那正是握手要拒的对象）；
- *  engineVersion 与 shim 构造 TTS_Config 钉死的 version 同源。不符 = 过期 daemon → kill 重拉一次 */
+ *  engineVersion 与 shim 构造 TTS_Config 的 version 同源（spec.modelVersion 参数化，缺省 v2）。
+ *  不符 = 过期 daemon（版本切换或旧代码拉起）→ kill 重拉一次 */
 export const DAEMON_PROTOCOL_VERSION = "2";
 export const DAEMON_ENGINE_VERSION = "v2";
 
@@ -129,9 +137,10 @@ const DAEMON_IDLE_MINUTES = BUILTIN_DAEMON_IDLE.gptsovits;
 /** 加载窗显式钉住（与 daemon-session 全局缺省同值）：say daemon ls 的「加载中」判定与握手预算共用同一数 */
 export const DAEMON_READY_TIMEOUT_MS = 120_000;
 
-/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源） */
-export function expectedDaemonVersionKey(labDir: string): DaemonVersionKey {
-  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: DAEMON_ENGINE_VERSION, weightsFingerprint: weightsFingerprint(labDir, GPTSOVITS_WEIGHT_MARKERS) };
+/** 握手期望三元组的权威投影（ls 只读观测面与 session 装配共用，判据不留第二份真源）。
+ * version 缺省 v2：纯观测调用面（未感知配置时）与 v2 基线逐字等价，装配面显式传 spec.modelVersion */
+export function expectedDaemonVersionKey(labDir: string, version: string = DAEMON_ENGINE_VERSION): DaemonVersionKey {
+  return { protocol: DAEMON_PROTOCOL_VERSION, engineVersion: version, weightsFingerprint: weightsFingerprint(labDir, GPTSOVITS_WEIGHT_MARKERS) };
 }
 
 /** daemon 计时旋钮与闲置阈值的覆写面：真机走缺省，测试收窗与缩短收割窗口 */
@@ -173,8 +182,8 @@ export function createGptsovitsSynth(spec: GptsovitsLabSpec, host: Host, tuning:
             event.kind === "established" ? record(event.form, event.coldMs) : record("cooldown"),
         }
       : {}),
-    spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [spec.shimPath, "--repo", spec.repoDir, "--daemon", "--idle-minutes", String(idleMinutes)]),
-    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir),
+    spawn: (idleMinutes) => host.spawnDaemon(spec.pythonPath, [...spawnArgs(spec), "--daemon", "--idle-minutes", String(idleMinutes)]),
+    expectedVersionKey: () => expectedDaemonVersionKey(spec.labDir, spec.modelVersion ?? DAEMON_ENGINE_VERSION),
     readyTimeoutMs: tuning.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS,
     ...(tuning.warmTimeoutMs !== undefined ? { warmTimeoutMs: tuning.warmTimeoutMs } : {}),
     ...(tuning.requestTimeoutMs !== undefined ? { requestTimeoutMs: tuning.requestTimeoutMs } : {}),

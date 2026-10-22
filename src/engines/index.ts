@@ -1,4 +1,4 @@
-import { resolveDaemonConfig, type DaemonEngine, type DaemonEngineSettings } from "../config.ts";
+import { resolveDaemonConfig, resolveGptsovitsVersion, type DaemonEngine, type DaemonEngineSettings } from "../config.ts";
 import { SYSTEM_SAY_BIN, type Host } from "../host.ts";
 import { resolvePaths, sayLabEngineDir } from "../paths.ts";
 import type { ConfigFile, EngineAdapter, ResolvedConfig } from "../types.ts";
@@ -89,6 +89,8 @@ export interface DefaultRegistryOptions {
   fireredSynth?: FireredSynth;
   /** [daemon] 三层解析的 config 层输入：main() 读盘后注入；缺席 = env/内置两层（与 config 层上线前接线等价） */
   daemonFile?: ConfigFile | null;
+  /** [gptsovits] version 档位解析的 config 层输入：同 daemonFile 注入语义；缺席 = env 层回退 */
+  gptsovitsFile?: ConfigFile | null;
 }
 
 /**
@@ -102,11 +104,15 @@ export function createDefaultRegistry(host: Host, options: DefaultRegistryOption
   const daemon = resolveDaemonConfig({ env: host.env, file: options.daemonFile ?? null });
   for (const warning of daemon.warnings) host.writeStderr(`say: ${warning}\n`);
   const settingsFor = (engine: DaemonEngine): DaemonEngineSettings => ({ enabled: daemon.enabled, idleMinutes: daemon.idleMinutes[engine] });
+  // gptsovits 版本档位同款接线层单源解析：工厂侧 env-only 回退只覆盖直装配面（测试），主链路 config 层在这里进
+  const gptsovitsVersion = resolveGptsovitsVersion({ env: host.env, file: options.gptsovitsFile ?? null });
+  for (const warning of gptsovitsVersion.warnings) host.writeStderr(`say: ${warning}\n`);
   const gptsovits = createGptsovitsEngine({
     host,
     labDir: sayLabEngineDir(host.env, "gptsovits"),
     voicesDir: paths.voicesDir,
     daemonSettings: settingsFor(GPTSOVITS_ENGINE),
+    version: gptsovitsVersion.version,
     ...(options.gptsovitsSynth !== undefined ? { synth: options.gptsovitsSynth } : {}),
   });
   const voxcpm = createVoxcpmEngine({

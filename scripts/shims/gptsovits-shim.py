@@ -41,6 +41,10 @@ QUEUE_FULL_MESSAGE = "daemon queue full"
 WEIGHT_MARKERS = [
     "GPT-SoVITS/GPT_SoVITS/pretrained_models/.install-ok",
     "GPT-SoVITS/GPT_SoVITS/text/G2PWModel/.install-ok",
+    # v5turbo 档位资产两件（散文件无 .install-ok，文件级 size+mtime 投影）；与 TS 侧
+    # GPTSOVITS_WEIGHT_MARKERS 逐条一致（test/daemon-fingerprint.test.ts 双实现对拍钉死）。
+    "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/s2Gv5turbo.pth",
+    "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/vocoder.pth",
     "open_jtalk_dic_utf_8-1.11/.install-ok",
     "venv/nltk_data/tokenizers/punkt_tab/.install-ok",
     "venv/nltk_data/taggers/averaged_perceptron_tagger_eng/.install-ok",
@@ -310,8 +314,8 @@ def serve_daemon(args) -> int:
 
             from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 
-            # CPU 档显式钉死（调研实证 MPS 全线慢 1.5-2 倍弃用）；权重走仓库默认 v2 预训练路径
-            config = TTS_Config({"custom": {"device": "cpu", "is_half": False, "version": "v2"}})
+            # CPU 档显式钉死（调研实证 MPS 全线慢 1.5-2 倍弃用）；权重路径随 model-version 键走 GPT-SoVITS 内置版本表
+            config = TTS_Config({"custom": {"device": "cpu", "is_half": False, "version": args.model_version}})
             pipeline = TTS(config)
             engine_info["pipeline"] = pipeline
             engine_info["ready"] = {
@@ -361,6 +365,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="GPT-SoVITS say shim")
     parser.add_argument("--repo", required=True, help="GPT-SoVITS 仓库根（权重相对路径与配置写盘按它解析）")
     parser.add_argument("--lab", default=None, help="say-lab 引擎目录（daemon 形态 sock/pid/log 与权重指纹落点）；缺省按 repo 父目录推导")
+    parser.add_argument("--model-version", default="v2", help="模型版本档位（GPT-SoVITS version 键：v2 基线 | v5turbo 高速 zero-shot），TTS_Config custom.version 直传")
     parser.add_argument("--print-fingerprint", action="store_true", help="只打印权重指纹并退出（排障与公式对拍用，不触引擎 import）")
     parser.add_argument("--daemon", action="store_true", help="常驻服务形态：bind unix socket 经 JSONL 帧服务多 CLI 连接，闲置自收割")
     parser.add_argument("--idle-minutes", type=float, default=15.0, help="daemon 闲置收割阈值（分钟），无请求无连接超阈即自退")
@@ -393,8 +398,8 @@ def main() -> int:
         from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 
         int16 = np.int16
-        # CPU 档显式钉死（调研实证 MPS 全线慢 1.5-2 倍弃用）；权重走仓库默认 v2 预训练路径
-        config = TTS_Config({"custom": {"device": "cpu", "is_half": False, "version": "v2"}})
+        # CPU 档显式钉死（调研实证 MPS 全线慢 1.5-2 倍弃用）；权重路径随 model-version 键走 GPT-SoVITS 内置版本表
+        config = TTS_Config({"custom": {"device": "cpu", "is_half": False, "version": args.model_version}})
         pipeline = TTS(config)
         emit({
             "type": "ready",

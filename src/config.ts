@@ -1,5 +1,6 @@
 import { parse as parseToml } from "smol-toml";
 import { messageOf } from "./errors.ts";
+import type { Host } from "./host.ts";
 import type { LocaleLang } from "./locale.ts";
 import type {
   ConfigFile,
@@ -29,7 +30,7 @@ export const DEFAULT_VOICE_KEY = "default";
  */
 export const DEFAULT_RATE_WPM = 175;
 
-const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets", "daemon"] as const;
+const KNOWN_KEYS = ["engine", "voice", "speed", "fallback", "preset", "presets", "daemon", "gptsovits"] as const;
 
 /**
  * 内置预设表：voice="default" 关键字按 locale 的零配置落点。
@@ -46,6 +47,25 @@ export const BUILTIN_PRESETS: Readonly<Record<string, PresetDefinition>> = {
 };
 
 export type ConfigFileParse = { ok: true; value: ConfigFile } | { ok: false; error: string };
+
+/**
+ * 配置文件的容错读取（存在性 → 可读 → 可解析三道闸，坏面全部降级 null + 原因）。
+ * speak 主编排与 daemon 观测面共用：坏配置不让任何命令瘫痪，只把原因留在 warnings。
+ */
+export async function loadConfigFile(host: Host, configFile: string): Promise<{ file: ConfigFile | null; warnings: string[] }> {
+  if (!host.fileExists(configFile)) return { file: null, warnings: [] };
+  let text: string;
+  try {
+    text = await host.readFileText(configFile);
+  } catch (error) {
+    return { file: null, warnings: [`${configFile} 读取失败，已按默认配置继续：${messageOf(error)}`] };
+  }
+  const parsed = parseConfigFile(text);
+  if (!parsed.ok) {
+    return { file: null, warnings: [`${configFile} 解析失败，已按默认配置继续：${parsed.error}`] };
+  }
+  return { file: parsed.value, warnings: [] };
+}
 
 /**
  * 只做语法层：TOML 解析成功即按已知键摘取原始值，类型校验留给 resolveConfig。
@@ -369,4 +389,46 @@ export function daemonForEngine(input: {
 }): { enabled: boolean; idleMinutes: number; warnings: string[] } {
   const resolved = resolveDaemonConfig(input);
   return { enabled: resolved.enabled, idleMinutes: resolved.idleMinutes[input.engine], warnings: resolved.warnings };
+}
+
+/**
+ * GPT-SoVITS 模型版本档位（v2 基线 | v5turbo 高速 zero-shot 档）：
+ * 内置 v2 < config [gptsovits].version < env SAY_GPTSOVITS_VERSION，无 flag 层。
+ * 枚举刻意收窄到两个已装机版本——v5dev 官方定位刷榜研究（32 步 CFG）且权重不随
+ * install 落盘，放行枚举只会把「配置成功、引擎加载 fatal」的远端错误提前到解析层。
+ * 坏值跳层降级 v2 + 警告（pick 系同一哲学：typo 不劫持低层明确表态，v2 基线永远能出声）。
+ */
+export type GptsovitsModelVersion = "v2" | "v5turbo";
+const GPTSOVIT_VERSIONS: readonly GptsovitsModelVersion[] = ["v2", "v5turbo"];
+
+export function resolveGptsovitsVersion(input: { env: EnvMap; file: ConfigFile | null }): {
+  version: GptsovitsModelVersion;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const allowed = GPTSOVIT_VERSIONS.map((v) => `"${v}"`).join(" 或 ");
+
+  let version: GptsovitsModelVersion | null = null;
+  const rawEnv = input.env.SAY_GPTSOVITS_VERSION;
+  if (rawEnv !== undefined && rawEnv !== "") {
+    if ((GPTSOVIT_VERSIONS as readonly string[]).includes(rawEnv)) version = rawEnv as GptsovitsModelVersion;
+    else warnings.push(`SAY_GPTSOVITS_VERSION 只能是 ${allowed}，已忽略本层：${JSON.stringify(rawEnv)}`);
+  }
+  if (version === null) {
+    const table = input.file?.gptsovits;
+    if (table !== undefined && table !== null && (typeof table !== "object" || Array.isArray(table))) {
+      // 与 resolveDaemonConfig 的「期望分节表，已忽略」同构：漏写方括号（gptsovits = "v5turbo"）这类
+      // 坏形态不能静默降级——用户以为已切档，实际永远跑 v2，观测面无提示
+      warnings.push(`gptsovits 期望分节表（[gptsovits] version = ...），已忽略：${JSON.stringify(table)}`);
+    }
+    const raw = typeof table === "object" && table !== null && !Array.isArray(table)
+      ? (table as Record<string, unknown>).version
+      : undefined;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      if (typeof raw === "string" && (GPTSOVIT_VERSIONS as readonly string[]).includes(raw)) version = raw as GptsovitsModelVersion;
+      else if (typeof raw !== "string") warnings.push(`gptsovits.version 期望字符串，已忽略：${JSON.stringify(raw)}`);
+      else warnings.push(`gptsovits.version 只能是 ${allowed}，已忽略：${JSON.stringify(raw)}`);
+    }
+  }
+  return { version: version ?? "v2", warnings };
 }

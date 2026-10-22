@@ -61,6 +61,25 @@ test("auto 层依赖缺失只进 autoPending，不拉低 ready", () => {
   assert.equal(r.autoPending.length, m.weights.filter((w) => w.tier === "auto").length);
 });
 
+test("optional 档位资产（gptsovits v5turbo 两件）缺失只进 autoPending 提示，v2-only 用户不判 partial", () => {
+  const m = ENGINES.gptsovits;
+  const d = "/lab/gptsovits";
+  const optional = m.weights.filter((w) => w.tier === "optional").map((w) => w.file);
+  assert.equal(optional.length, 2);
+  // required 面（底模 zip / G2PW / open_jtalk / NLTK 三件）全在位 + venv 在，仅 v5 两件缺；
+  // archive 条目需要目录与 .install-ok 两条路径都在，且目录以 contents 标注 dir 形态（assetPresent 的 isDirectory 查）
+  const archiveDirs = m.weights.filter((w) => w.tier === undefined && w.archive).map((w) => `${d}/${w.file}`);
+  const contents = Object.fromEntries(archiveDirs.map((p) => [p, { dir: true }]));
+  const required = m.weights
+    .filter((w) => w.tier === undefined)
+    .flatMap((w) => (w.archive ? [`${d}/${w.file}`, `${d}/${w.file}/.install-ok`] : [`${d}/${w.file}`]));
+  const paths = [`${d}/venv/bin/python`, ...required];
+  const r = assessEngine(m, d, fakeFs(paths, contents));
+  assert.equal(r.status, "ready", "optional 缺失不判 partial");
+  assert.deepEqual(r.autoPending.sort(), optional.sort());
+  assert.deepEqual(r.missing, []);
+});
+
 test("archive 资产以 .install-ok 完成标记为就绪判据（防解压中断残目录假就绪）", () => {
   const m = ENGINES.gptsovits;
   const d = "/lab/gptsovits";
