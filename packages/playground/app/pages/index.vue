@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { AuditionManifest, AuditionSummary, PlayingCell } from "../../server/lib/auditions.ts";
 
 useHead({ title: "say 嗓音工作台" });
@@ -27,6 +27,16 @@ const propFields = [
 
 const activeKey = () =>
   currentCell.value ? `cell-${currentCell.value.engine}-${currentCell.value.locale}-${currentCell.value.voice}` : "";
+
+/** 活体合成面：引擎取档期全名单，嗓位从样音格 voice token 去重派生 */
+const synthEngines = computed(() => manifest.value?.engines.map((e) => e.name) ?? []);
+const synthVoices = computed(() => {
+  const tokens = new Set<string>();
+  for (const e of manifest.value?.engines ?? []) {
+    for (const c of e.cells) if (c.kind === "play") tokens.add(c.voice);
+  }
+  return [...tokens].sort();
+});
 
 const pickDate = async (date: string) => {
   loading.value = true;
@@ -98,6 +108,8 @@ onMounted(async () => {
       </section>
 
       <MatrixPlayer :cell="currentCell" :date="manifest.date" />
+
+      <SynthConsole :engines="synthEngines" :voices="synthVoices" />
 
       <section>
         <h2>嗓位性别 × 音源</h2>
