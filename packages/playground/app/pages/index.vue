@@ -29,6 +29,11 @@ const activeKey = () =>
   currentCell.value ? `cell-${currentCell.value.engine}-${currentCell.value.locale}-${currentCell.value.voice}` : "";
 
 /** 活体合成面：引擎取档期全名单，嗓位从样音格 voice token 去重派生 */
+const historyKey = ref(0);
+const bumpHistory = () => {
+  historyKey.value += 1;
+};
+
 const synthEngines = computed(() => manifest.value?.engines.map((e) => e.name) ?? []);
 const synthVoices = computed(() => {
   const tokens = new Set<string>();
@@ -110,6 +115,10 @@ onMounted(async () => {
       <MatrixPlayer :cell="currentCell" :date="manifest.date" />
 
       <SynthConsole :engines="synthEngines" :voices="synthVoices" />
+
+      <BlindTest :engines="synthEngines" :voices="synthVoices" @saved="bumpHistory" />
+
+      <VerdictHistory :key="historyKey" />
 
       <section>
         <h2>嗓位性别 × 音源</h2>
