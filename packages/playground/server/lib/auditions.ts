@@ -33,6 +33,11 @@ export interface NaCell {
   flags: string[];
 }
 
+/** 播放中的格子：play 格带上引擎名，播放器与裁决面据此自述 */
+export interface PlayingCell extends PlayCell {
+  engine: string;
+}
+
 export type MatrixCell = PlayCell | AwaitCell | NaCell;
 
 export interface EngineRow {
