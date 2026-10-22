@@ -5,7 +5,7 @@ import type { Availability, EngineAdapter, SpeakOptions, VoiceInfo } from "../ty
 import { cloneVoiceLanguage, resolveCharacterVoice, splitVoiceName, transcriptOf } from "../voices.ts";
 import { wpmToSpeed } from "./sherpa.ts";
 import { createGptsovitsSynth, createShimSynth, type GptsovitsDaemonTuning, type GptsovitsLabSpec, type GptsovitsSynth } from "./gptsovits-binding.ts";
-import { daemonForEngine, type DaemonEngineSettings } from "../config.ts";
+import { daemonForEngine, resolveGptsovitsVersion, type DaemonEngineSettings } from "../config.ts";
 import { recordDaemonForm } from "../daemon-trace.ts";
 
 export const GPTSOVITS_ENGINE = "gptsovits";
@@ -54,6 +54,8 @@ export interface GptsovitsEngineOptions {
   daemon?: GptsovitsDaemonTuning;
   /** 接线层（main）注入的三层解析投影；缺省 env-only 回退——与 daemon 上线前接线等价 */
   daemonSettings?: DaemonEngineSettings;
+  /** 模型版本档位（v2 | v5turbo）：接线层注入 resolveGptsovitsVersion 胜出值；缺省 env-only 回退，v2 基线不动 */
+  version?: string;
 }
 
 /**
@@ -183,11 +185,19 @@ function assertAudible(samples: Float32Array): void {
  */
 export function createGptsovitsEngine(options: GptsovitsEngineOptions): EngineAdapter {
   const { host, voicesDir } = options;
+  // 版本档位：接线注入 > env-only 回退（resolveGptsovitsVersion env 层）> v2 基线；坏值警告不吞
+  let modelVersion = options.version;
+  if (modelVersion === undefined) {
+    const resolved = resolveGptsovitsVersion({ env: host.env, file: null });
+    for (const warning of resolved.warnings) host.writeStderr(`say: ${warning}\n`);
+    modelVersion = resolved.version;
+  }
   const spec: GptsovitsLabSpec = {
     labDir: options.labDir,
     repoDir: `${options.labDir}/GPT-SoVITS`,
     pythonPath: resolveLabPython(options.labDir, host),
     shimPath: options.shimPath ?? fileURLToPath(new URL("../../scripts/shims/gptsovits-shim.py", import.meta.url)),
+    modelVersion,
   };
   const defaultVoiceDir = options.defaultVoiceDir ?? fileURLToPath(new URL("../../assets/engines/gptsovits", import.meta.url));
 

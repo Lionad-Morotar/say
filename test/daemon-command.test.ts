@@ -140,3 +140,40 @@ describe("runDaemonLs：全表探测", () => {
     }
   });
 });
+
+describe("runDaemonLs 版本档位感知：gptsovits 期望版本随配置层走", () => {
+  /** 起 version=version 的假 gptsovits daemon（指纹恒合法），跑 ls 返回输出与 gptsovits 行 */
+  async function lsWithConfig(configText: string | null, daemonVersion: string): Promise<{ line: string; out: string }> {
+    const root = mkdtempSync(join(tmpdir(), "say-daemon-ver-"));
+    roots.push(root);
+    const env = { XDG_DATA_HOME: root, XDG_CONFIG_HOME: root };
+    const fake = createFakeHost({ env, files: {}, spawnOutcome: () => ({ exitCode: 1, signal: null, stdout: "", stderr: "" }) });
+    const paths = daemonPathsOf(env, "gptsovits");
+    mkdirSync(paths.labDir, { recursive: true });
+    const fingerprint = expectedDaemonVersionKey(paths.labDir).weightsFingerprint;
+    const daemon = await startFakeDaemon(paths.sockPath, { ready: readyFrame({ version: daemonVersion, weights_fingerprint: fingerprint }) });
+    try {
+      fake.files.set(paths.sockPath, "");
+      fake.files.set(paths.pidPath, `${process.pid}\n`);
+      if (configText !== null) fake.files.set(join(root, "say", "config.toml"), configText);
+      const deps: RunDeps = { host: fake.host, paths: resolvePaths(env), registry: createDefaultRegistry(fake.host), sayBin: "/usr/bin/say" };
+      const code = await runDaemonLs(deps);
+      expect(code).toBe(EXIT_OK);
+      const out = stdoutOf(fake);
+      const line = out.trim().split("\n").find((l) => l.includes("gptsovits"))!;
+      return { line, out };
+    } finally {
+      await daemon.close();
+    }
+  }
+
+  it("config [gptsovits] version=v5turbo 且 daemon ready v5turbo：warm 不误报 stale", async () => {
+    const { line } = await lsWithConfig('[gptsovits]\nversion = "v5turbo"\n', "v5turbo");
+    expect(line).toContain("warm");
+  });
+
+  it("无 config 时 daemon ready v5turbo：按 v2 期望判 stale（档位不一致即过期常驻）", async () => {
+    const { line } = await lsWithConfig(null, "v5turbo");
+    expect(line).toContain("stale");
+  });
+});

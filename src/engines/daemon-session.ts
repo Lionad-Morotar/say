@@ -46,6 +46,11 @@ export interface DaemonVersionKey {
 export const GPTSOVITS_WEIGHT_MARKERS: readonly string[] = [
   "GPT-SoVITS/GPT_SoVITS/pretrained_models/.install-ok",
   "GPT-SoVITS/GPT_SoVITS/text/G2PWModel/.install-ok",
+  // v5turbo 档位资产两件（manifest tier:"optional" 的散文件形态）：文件级 size+mtime 投影。
+  // v2-only 用户未装时缺项记 rel|missing|0（两侧同值指纹稳定，不破坏握手）；
+  // 显式安装/升级重装重写文件 → mtime 变 → 旧 daemon 握手失效自动重拉。
+  "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/s2Gv5turbo.pth",
+  "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/vocoder.pth",
   "open_jtalk_dic_utf_8-1.11/.install-ok",
   "venv/nltk_data/tokenizers/punkt_tab/.install-ok",
   "venv/nltk_data/taggers/averaged_perceptron_tagger_eng/.install-ok",

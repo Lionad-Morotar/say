@@ -1,6 +1,7 @@
 // 引擎安装状态评估（engine-v2 S1）：纯函数读文件系统，不打网络不装东西，是 status --json 与 --verify 的共同裁决点。
 // 三态：missing（venv 缺且主权重有缺，视为从未装过）/ partial（主权重缺）/ ready（venv + 主权重 + patch 齐）；
-// tier=auto 的首跑自拉依赖缺失只进 autoPending 提示，不拉低状态（引擎侧 fallback 链实测可用，报告实证）。
+// tier=auto 的首跑自拉依赖与 tier=optional 的版本档可选资产（v5turbo 权重）缺失都只进 autoPending 提示，
+// 不拉低状态——前者有引擎侧 fallback 链兜底（报告实证），后者是显式配置才消费的档位资产（v2 基线不依赖）。
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ENGINES } from "./engine-manifest.mjs";
@@ -47,7 +48,8 @@ export function assessEngine(manifest, engineDir, fs = {}) {
   const autoPending = [];
   for (const w of manifest.weights) {
     if (assetPresent(path.join(engineDir, w.file), Boolean(w.archive), { statSync: stat, existsSync: exists })) continue;
-    (w.tier === "auto" ? autoPending : missing).push(w.file);
+    // auto 与 optional 同面：都不判 partial，只提示（字段名沿用 autoPending，JSON 形状不变）
+    (w.tier === "auto" || w.tier === "optional" ? autoPending : missing).push(w.file);
   }
   const requiredMissing = missing.length > 0;
   const patchStatus = manifest.patches.length > 0 ? assessPatches(manifest, engineDir, fs) : null;

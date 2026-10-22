@@ -305,12 +305,15 @@ describe("shim --daemon 活体竞态与队列容量（假引擎桩）", () => {
     expect(Number(m?.[1])).toBe(BUILTIN_DAEMON_IDLE.gptsovits);
   });
 
-  it("gptsovits 版本字面跨语言对拍：shim 源内 TTS_Config 默认 version 全部 = TS 常量（真引擎可能采信该默认，漂移即握手失配）", () => {
+  it("gptsovits 版本缺省跨语言对拍：shim --model-version 缺省字面量 = TS 常量（版本参数化后 TTS_Config 直读参数，缺省面漂移即握手失配）", () => {
     // ready 帧的 version 走 str(config.version)：桩引擎硬编码自述值、掩盖 shim 传入的默认，
-    // 故帧面断言只能钉桩↔常量；真机 TTS_Config 是否采信该默认不可知，源内字面须单独钉死。
+    // 故帧面断言只能钉桩↔常量；真机 TTS_Config 是否采信该默认不可知，argparse 缺省须单独钉死。
     const py = readFileSync(SHIM, "utf8");
-    const literals = [...py.matchAll(/"version": "([^"]+)"/g)].map((m) => m[1] ?? "");
-    expect(literals.length).toBeGreaterThan(0);
-    expect(literals.every((v) => v === DAEMON_ENGINE_VERSION)).toBe(true);
+    const m = /--model-version", default="([^"]+)"/.exec(py);
+    expect(m).not.toBeNull();
+    expect(m?.[1]).toBe(DAEMON_ENGINE_VERSION);
+    // TTS_Config 的 version 键直读参数不落字面：任何回退到硬编码字面量的改法都该在此拦下
+    expect(py).toContain('"version": args.model_version');
+    expect([...py.matchAll(/"version": "/g)]).toHaveLength(0);
   });
 });

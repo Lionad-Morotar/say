@@ -1,5 +1,5 @@
 import type { CliRequest } from "./cli.ts";
-import { DAEMON_ENGINES, type DaemonEngine } from "./config.ts";
+import { DAEMON_ENGINES, loadConfigFile, resolveGptsovitsVersion, type DaemonEngine } from "./config.ts";
 import type { RunDeps } from "./deps.ts";
 import { EXIT_OK } from "./report.ts";
 import { probeDaemonStatus, type DaemonStatusRow } from "./daemon-status.ts";
@@ -38,7 +38,12 @@ export function renderStatusTable(rows: readonly DaemonStatusRow[]): string {
 }
 
 export async function runDaemonLs(deps: RunDeps): Promise<number> {
-  const rows = await Promise.all(DAEMON_ENGINES.map((engine: DaemonEngine) => probeDaemonStatus(deps.host, engine)));
+  // gptsovits 期望版本随配置档位走：config 读坏了降级 v2 投影，原因行照常上 stderr
+  const loaded = await loadConfigFile(deps.host, deps.paths.configFile);
+  for (const warning of loaded.warnings) deps.host.writeStderr(`say: ${warning}\n`);
+  const gptsovits = resolveGptsovitsVersion({ env: deps.host.env, file: loaded.file });
+  for (const warning of gptsovits.warnings) deps.host.writeStderr(`say: ${warning}\n`);
+  const rows = await Promise.all(DAEMON_ENGINES.map((engine: DaemonEngine) => probeDaemonStatus(deps.host, engine, 2_000, gptsovits.version)));
   deps.host.writeStdout(renderStatusTable(rows) + "\n");
   return EXIT_OK;
 }

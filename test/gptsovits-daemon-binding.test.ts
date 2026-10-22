@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
-import { createGptsovitsSynth, DAEMON_QUEUE_FULL_MESSAGE, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
+import { createGptsovitsSynth, DAEMON_QUEUE_FULL_MESSAGE, expectedDaemonVersionKey, type GptsovitsSynthRequest } from "../src/engines/gptsovits-binding.ts";
 import { createGptsovitsEngine } from "../src/engines/gptsovits.ts";
 import { GPTSOVITS_WEIGHT_MARKERS, weightsFingerprint } from "../src/engines/daemon-session.ts";
 import type { EngineAdapter } from "../src/types.ts";
@@ -40,6 +40,34 @@ function withTempLab(run: (labDir: string, expectedFingerprint: string) => Promi
 function specOf(labDir: string) {
   return { labDir, repoDir: `${labDir}/GPT-SoVITS`, pythonPath: "/usr/bin/env", shimPath: "/say-repo/scripts/shims/gptsovits-shim.py" };
 }
+
+describe("模型版本档位透传（v5turbo 切档链路）", () => {
+  it("expectedDaemonVersionKey 按 version 参数投影 engineVersion（缺省仍 v2）", () => {
+    expect(expectedDaemonVersionKey("/lab").engineVersion).toBe("v2");
+    expect(expectedDaemonVersionKey("/lab", "v5turbo").engineVersion).toBe("v5turbo");
+  });
+
+  it("spec.modelVersion=v5turbo：daemon 与 per-call spawn argv 都显式携带 --model-version", async () => {
+    const fake = makePerCallCapableHost();
+    const spec = { ...specOf("/lab"), modelVersion: "v5turbo" as const };
+    const synth = createGptsovitsSynth(spec, fake.host, FAST);
+    await synth(REQUEST); // daemon 拉起失败 → per-call 退路出声，两形态 spawn 都留痕
+    const daemonArgs = fake.daemons.find((d) => d.args.includes("--daemon"))!.args;
+    expect(daemonArgs).toContain("--model-version");
+    expect(daemonArgs[daemonArgs.indexOf("--model-version") + 1]).toBe("v5turbo");
+    const perCallArgs = fake.daemons.find((d) => !d.args.includes("--daemon"))!.args;
+    expect(perCallArgs).toContain("--model-version");
+    expect(perCallArgs[perCallArgs.indexOf("--model-version") + 1]).toBe("v5turbo");
+  });
+
+  it("缺省 spec 不带 modelVersion：argv 携带 --model-version v2（显式可观测优于 shim 默认）", async () => {
+    const fake = makePerCallCapableHost();
+    const synth = createGptsovitsSynth(specOf("/lab"), fake.host, FAST);
+    await synth(REQUEST);
+    const args = fake.daemons.find((d) => !d.args.includes("--daemon"))!.args;
+    expect(args[args.indexOf("--model-version") + 1]).toBe("v2");
+  });
+});
 
 /** per-call 降级面的 fake：daemon spawn 记录在案但永不 bind socket；per-call spawn 回 ready+audio */
 function makePerCallCapableHost(options: { onDaemonSpawn?: (record: DaemonSpawnRecord) => void; files?: Record<string, string | Uint8Array>; env?: Record<string, string>; now?: () => number } = {}) {
@@ -256,6 +284,26 @@ describe("createGptsovitsEngine 默认接线（daemon-first 生效面）", () =>
       expect(out).toMatchObject({ type: "pcm", sampleRate: 24000 });
       expect(fake.daemons[0]!.args).toContain("--daemon"); // 首选形态确实是常驻 daemon
       expect(fake.daemons[1]!.args).not.toContain("--daemon"); // 退路 per-call 兜住出声
+    });
+  });
+
+  it("version 选项注入 v5turbo：spawn argv 携带 --model-version v5turbo（档位经装配面到 shim）", async () => {
+    await withTempLab(async (labDir) => {
+      const fake = makePerCallCapableHost({ files: engineFiles });
+      const engine = createGptsovitsEngine({ host: fake.host, labDir, voicesDir: VOICES, defaultVoiceDir: DEF, daemon: FAST, version: "v5turbo" });
+      await engine.speak("你好", { voice: null, rateWpm: 175, output: null });
+      const args = fake.daemons[0]!.args;
+      expect(args[args.indexOf("--model-version") + 1]).toBe("v5turbo");
+    });
+  });
+
+  it("缺省 version：env SAY_GPTSOVITS_VERSION 感知（装配点 env-only 回退面）", async () => {
+    await withTempLab(async (labDir) => {
+      const fake = makePerCallCapableHost({ files: engineFiles, env: { SAY_GPTSOVITS_VERSION: "v5turbo" } });
+      const engine = createGptsovitsEngine({ host: fake.host, labDir, voicesDir: VOICES, defaultVoiceDir: DEF, daemon: FAST });
+      await engine.speak("你好", { voice: null, rateWpm: 175, output: null });
+      const args = fake.daemons[0]!.args;
+      expect(args[args.indexOf("--model-version") + 1]).toBe("v5turbo");
     });
   });
 });

@@ -81,10 +81,11 @@ async function readDaemonConfigFile(host: Host, configFile: string): Promise<Con
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const host = createNodeHost();
   const paths = resolvePaths(host.env);
+  const configFile = await readDaemonConfigFile(host, paths.configFile);
   const deps: RunDeps = {
     host,
     paths,
-    registry: createDefaultRegistry(host, { daemonFile: await readDaemonConfigFile(host, paths.configFile) }),
+    registry: createDefaultRegistry(host, { daemonFile: configFile, gptsovitsFile: configFile }),
     sayBin: SYSTEM_SAY_BIN,
   };
   return run(argv, deps);

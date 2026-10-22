@@ -37,7 +37,8 @@ const hf = (repo, file) => ({ net: "hf-mirror", url: `https://hf-mirror.com/${re
  * @property {number} size 精确字节数（ModelScope API 实测）
  * @property {string} sha256 ModelScope API 实测校验和
  * @property {{net:string,url:string}[]} sources 有序下载通道
- * @property {("auto"|undefined)} [tier] auto = 引擎首跑自拉的隐藏依赖（状态查询提示但不判 partial）
+ * @property {("auto"|"optional"|undefined)} [tier] auto = 引擎首跑自拉的隐藏依赖（状态查询提示但不判 partial）；
+ *   optional = 版本档可选资产（显式 --with-optional 安装、状态提示不判 partial、引擎侧 v2 基线判据不纳入）
  * @property {{strip:number,delete?:boolean}} [archive] zip/tar.gz 包：解压 strip 层后落位，delete = 解压后删包
  */
 
@@ -113,6 +114,24 @@ const GPTSOVITS = {
         { net: "jsdelivr", url: "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/corpora/cmudict.zip" },
       ],
       archive: { strip: 1, delete: true },
+    },
+    // v5turbo 档位资产（tier: optional，SAY_GPTSOVITS_VERSION=v5turbo 时才消费）：
+    // HF lj1995 官方仓实测（hf-mirror tree API，LFS oid 即 sha256）；ModelScope XXXXRT 仓无 v5 镜像。
+    // v5dev 权重刻意不收——官方定位刷榜研究（32 步 CFG 太慢），解析层枚举也不放行。
+    // 散文件形态无 .install-ok，权重指纹走文件级 size+mtime 投影（daemon-session/shim 双侧清单同改）。
+    {
+      file: "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/s2Gv5turbo.pth",
+      size: 766406144,
+      sha256: "287b32a06b7d486f5303ec520468b0728fb01aac8b0f5d86fd5455c9a1d3e022",
+      sources: [hf("lj1995/GPT-SoVITS", "gsv-v5-pretrained/s2Gv5turbo.pth")],
+      tier: "optional",
+    },
+    {
+      file: "GPT-SoVITS/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/vocoder.pth",
+      size: 57761163,
+      sha256: "b7543c83222aa2105bb4efb56845086bc5f2eeba61243d723ffa062052b3221f",
+      sources: [hf("lj1995/GPT-SoVITS", "gsv-v5-pretrained/vocoder.pth")],
+      tier: "optional",
     },
   ],
   patches: [],

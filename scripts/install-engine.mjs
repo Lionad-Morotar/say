@@ -14,6 +14,7 @@ import { applyPatches } from "./lib/engine-patch.mjs";
 const args = process.argv.slice(2);
 const jsonOut = args.includes("--json");
 const verifyOnly = args.includes("--verify");
+const withOptional = args.includes("--with-optional");
 const cmd = args.find((a) => !a.startsWith("-")) ?? "status";
 
 function fail(msg) {
@@ -22,9 +23,10 @@ function fail(msg) {
 }
 
 function usage() {
-  console.log(`用法: install-engine.mjs <status|install|patch> [engine] [--json] [--verify]
+  console.log(`用法: install-engine.mjs <status|install|patch> [engine] [--json] [--verify] [--with-optional]
   status [--json]       四引擎安装状态（--verify 时缺项导致 exit 1）
   install <engine>      幂等安装：克隆仓库 + uv venv 依赖 + 权重下载 + patch（engine = ${ENGINE_IDS.join("|")}|all）
+  install <engine> --with-optional   连同 optional 档位资产一起装（当前仅 gptsovits 的 v5turbo 权重两件）
   patch <engine>        只应用 patch 清单（当前仅 firered 有）`);
 }
 
@@ -196,7 +198,8 @@ async function cmdInstall(engineId) {
     const deps = ensureDeps(manifest, dir);
     console.error(`  依赖: ${deps.action}`);
     for (const w of manifest.weights) {
-      if (w.tier === "auto") continue; // 首跑自拉依赖不主动下载（20GB 级大件按需）
+      // auto = 首跑自拉不主动下载（20GB 级大件按需）；optional = 版本档可选资产，仅 --with-optional 显式安装
+      if (w.tier === "auto" || (w.tier === "optional" && !withOptional)) continue;
       const r = await ensureWeight(dir, w);
       console.error(`  权重 ${w.file}: ${r.action}${r.channel ? ` (${r.channel}/${r.verified})` : ""}`);
       if (r.action === "download-failed" || r.action === "extract-failed") process.exitCode = 1;

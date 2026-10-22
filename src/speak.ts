@@ -1,6 +1,6 @@
 import type { CliRequest } from "./cli.ts";
 import { parseArgv } from "./cli.ts";
-import { parseConfigFile, resolveConfig } from "./config.ts";
+import { loadConfigFile, resolveConfig } from "./config.ts";
 import { startTiming, stagingPath, type Delivery } from "./delivery.ts";
 import type { RunDeps } from "./deps.ts";
 import { runEngineCommand } from "./engines-command.ts";
@@ -12,7 +12,7 @@ import { detectLocale } from "./locale.ts";
 import { chunkText, normalizeText } from "./normalize.ts";
 import { speakChunked, speakOnce, type SpeakContext } from "./pipeline.ts";
 import { EXIT_OK, EXIT_USAGE, fail, writeDebug } from "./report.ts";
-import type { ConfigFile, SpeakOptions } from "./types.ts";
+import type { SpeakOptions } from "./types.ts";
 
 type TextSource = { ok: true; text: string } | { ok: false; error: string };
 
@@ -45,25 +45,6 @@ async function resolveText(request: Extract<CliRequest, { kind: "speak" }>, host
   } catch (error) {
     return { ok: false, error: `读取标准输入失败：${messageOf(error)}` };
   }
-}
-
-/** 配置坏了不该让命令瘫痪：降级为默认值，把原因留在 stderr 上 */
-async function loadConfigFile(
-  host: Host,
-  configFile: string,
-): Promise<{ file: ConfigFile | null; warnings: string[] }> {
-  if (!host.fileExists(configFile)) return { file: null, warnings: [] };
-  let text: string;
-  try {
-    text = await host.readFileText(configFile);
-  } catch (error) {
-    return { file: null, warnings: [`${configFile} 读取失败，已按默认配置继续：${messageOf(error)}`] };
-  }
-  const parsed = parseConfigFile(text);
-  if (!parsed.ok) {
-    return { file: null, warnings: [`${configFile} 解析失败，已按默认配置继续：${parsed.error}`] };
-  }
-  return { file: parsed.value, warnings: [] };
 }
 
 /**
