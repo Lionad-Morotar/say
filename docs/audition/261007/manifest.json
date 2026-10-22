@@ -1,0 +1,782 @@
+{
+  "date": "261007",
+  "source": "engine-v2-voice-matrix.html",
+  "title": "say 引擎层 v2 嗓位多维矩阵",
+  "edition": "终版 · 试听裁决落档",
+  "summary": "2026-10-07 归档。Lionad 试听裁决三语默认：zh → indextts + 芙莉莲中配，en → firered（内置女声参考），ja → gptsovits + 芙莉莲日配，已落 src/config.ts 内置预设。本文件为裁决依据：40 组样音全部可播（绿框 = 裁决嗓位），音源修复记录与引擎属性见文末。外部模型审查报告",
+  "verdicts": [
+    {
+      "key": "zh",
+      "engine": "indextts",
+      "voice": "frieren-zh",
+      "reason": "中文听感四引擎最优（修复后芙莉莲中配窗）。此前按热延迟指标推演选 gptsovits——延迟达标不等于听感最优，试听为唯一 ground truth。"
+    },
+    {
+      "key": "en",
+      "engine": "firered",
+      "voice": "default",
+      "reason": "英文听感最优；firered 自带示例参考恰为女声（其余引擎内置英文参考多为男声或不稳）。Instruct 控制面能力仍未接线，属独立扩展项。"
+    },
+    {
+      "key": "ja",
+      "engine": "gptsovits",
+      "voice": "frieren",
+      "reason": "与接线时的内置预设一致，试听确认。地道日音仅芙莉莲日配主参考一路；gptsovits ja default 为中文腔降级参考，不作默认。"
+    }
+  ],
+  "engines": [
+    {
+      "name": "gptsovits",
+      "tag": "ja 默认引擎 · CPU 档",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/gptsovits-zh-default.wav",
+          "label": "default-zh",
+          "flags": [],
+          "note": "男声（官方示例参考）"
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "play",
+          "audio": "audio/gptsovits-zh-frieren-zh.wav",
+          "label": "frieren-zh",
+          "flags": [
+            "fix"
+          ],
+          "note": "修复重采"
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/gptsovits-zh-dva.wav",
+          "label": "dva",
+          "flags": [],
+          "note": "跨语种"
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/gptsovits-zh-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ],
+          "note": "干净源重采"
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/gptsovits-en-default.wav",
+          "label": "default-en",
+          "flags": [],
+          "note": "男声"
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "play",
+          "audio": "audio/gptsovits-en-frieren-en.wav",
+          "label": "frieren-en",
+          "flags": [
+            "fix"
+          ],
+          "note": "窗规整重采"
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/gptsovits-en-dva.wav",
+          "label": "dva",
+          "flags": [
+            "fix"
+          ],
+          "note": "窗规整重采"
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/gptsovits-en-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/gptsovits-ja-default.wav",
+          "label": "default",
+          "flags": [
+            "ja"
+          ],
+          "note": "default-zh 参考降级"
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "play",
+          "audio": "audio/gptsovits-ja-frieren.wav",
+          "label": "frieren",
+          "flags": [
+            "ja",
+            "winner"
+          ],
+          "note": "日配主参考 · ja 裁决嗓"
+        }
+      ]
+    },
+    {
+      "name": "voxcpm",
+      "tag": "流式 · 质量上限",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/voxcpm-zh-default.wav",
+          "label": "default",
+          "flags": [],
+          "note": "文本指令嗓"
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "play",
+          "audio": "audio/voxcpm-zh-frieren-zh.wav",
+          "label": "frieren-zh",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/voxcpm-zh-dva.wav",
+          "label": "dva",
+          "flags": [
+            "fix"
+          ],
+          "note": "窗规整后恢复"
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/voxcpm-zh-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/voxcpm-en-default.wav",
+          "label": "default",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "play",
+          "audio": "audio/voxcpm-en-frieren-en.wav",
+          "label": "frieren-en",
+          "flags": [
+            "fix"
+          ],
+          "note": "塌男声病灶修复"
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/voxcpm-en-dva.wav",
+          "label": "dva",
+          "flags": [
+            "fix"
+          ],
+          "note": "无浊音病灶修复"
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/voxcpm-en-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/voxcpm-ja-default.wav",
+          "label": "default",
+          "flags": [
+            "ja"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "play",
+          "audio": "audio/voxcpm-ja-frieren.wav",
+          "label": "frieren",
+          "flags": [
+            "ja"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "indextts",
+      "tag": "zh 默认引擎（试听裁决）· 节奏控制最强",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/indextts-zh-default.wav",
+          "label": "default",
+          "flags": [],
+          "note": "男声（试听：吼出来的）"
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "play",
+          "audio": "audio/indextts-zh-frieren-zh.wav",
+          "label": "frieren-zh",
+          "flags": [
+            "fix",
+            "winner"
+          ],
+          "note": "zh 裁决嗓 · 修复重采"
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/indextts-zh-dva.wav",
+          "label": "dva",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/indextts-zh-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/indextts-en-default.wav",
+          "label": "default",
+          "flags": [],
+          "note": "男声"
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "play",
+          "audio": "audio/indextts-en-frieren-en.wav",
+          "label": "frieren-en",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/indextts-en-dva.wav",
+          "label": "dva",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/indextts-en-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/indextts-ja-default.wav",
+          "label": "default",
+          "flags": [
+            "ja"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "play",
+          "audio": "audio/indextts-ja-frieren.wav",
+          "label": "frieren",
+          "flags": [
+            "ja"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "firered",
+      "tag": "en 默认引擎（试听裁决）· Instruct 未接 · 39G 在位",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/firered-zh-default.wav",
+          "label": "default",
+          "flags": [],
+          "note": "女声（自带示例参考）"
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "play",
+          "audio": "audio/firered-zh-frieren-zh.wav",
+          "label": "frieren-zh",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/firered-zh-dva.wav",
+          "label": "dva",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/firered-zh-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/firered-en-default.wav",
+          "label": "default",
+          "flags": [
+            "winner"
+          ],
+          "note": "女声 · en 裁决嗓"
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "play",
+          "audio": "audio/firered-en-frieren-en.wav",
+          "label": "frieren-en",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "play",
+          "audio": "audio/firered-en-dva.wav",
+          "label": "dva",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "play",
+          "audio": "audio/firered-en-lucy.wav",
+          "label": "lucy",
+          "flags": [
+            "fix"
+          ]
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "play",
+          "audio": "audio/firered-ja-default.wav",
+          "label": "default",
+          "flags": [
+            "ja"
+          ],
+          "note": "Japanese tag"
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "play",
+          "audio": "audio/firered-ja-frieren.wav",
+          "label": "frieren",
+          "flags": [
+            "ja"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "zipvoice",
+      "tag": "v1 保留 · 回退链",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "await",
+          "note": "v1 未复测",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "na",
+          "flags": []
+        }
+      ]
+    },
+    {
+      "name": "sherpa",
+      "tag": "v1 基线 · locale miss 兜底",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "await",
+          "note": "matcha-zh：zf_* 女 + zm_* 男×45",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "await",
+          "note": "af_maple 女",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "na",
+          "flags": []
+        }
+      ]
+    },
+    {
+      "name": "system",
+      "tag": "回退终点",
+      "cells": [
+        {
+          "locale": "zh",
+          "voice": "default",
+          "kind": "await",
+          "note": "macOS 开放集",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "frieren-zh",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "dva",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "zh",
+          "voice": "lucy",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "default",
+          "kind": "await",
+          "note": "macOS 开放集",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "frieren-en",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "dva",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "en",
+          "voice": "lucy",
+          "kind": "na",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "default",
+          "kind": "await",
+          "note": "日文系统嗓（Kyoko 等）",
+          "flags": []
+        },
+        {
+          "locale": "ja",
+          "voice": "frieren",
+          "kind": "na",
+          "flags": []
+        }
+      ]
+    }
+  ],
+  "genderTable": [
+    {
+      "voice": "frieren（ja/en/zh）",
+      "gender": "female",
+      "basis": "種﨑敦美 / Mallory Roddak / 李蝉妃",
+      "source": "官方素材；261007 三窗规整：ja 10.0s、en 0-8.4s 前三句、zh 3.24s 独句（原窗混村长男声已弃）"
+    },
+    {
+      "voice": "dva",
+      "gender": "female",
+      "basis": "Charlet Chung",
+      "source": "主参考窗规整 1.5-10.5s 前两句（原 28s 致 voxcpm 无浊音）；peon-ping 17 条干音另存"
+    },
+    {
+      "voice": "lucy",
+      "gender": "female",
+      "basis": "Emi Lo（赛博浪客 S1E2）",
+      "source": "htdemucs_ft 重分离 7.3s 露西连续两句，零串线核验"
+    },
+    {
+      "voice": "default（gptsovits）",
+      "gender": "male",
+      "basis": "官方示例参考 + 261007 试听",
+      "source": "随仓 zh/en 男声示例；ja 无中性资产，参考降级 default-zh"
+    },
+    {
+      "voice": "default（indextts）",
+      "gender": "male",
+      "basis": "261007 试听（吼出来的男声）",
+      "source": "引擎自带示例参考；zh 裁决嗓是 frieren-zh 而非它"
+    },
+    {
+      "voice": "default（firered）",
+      "gender": "female",
+      "basis": "自带示例参考为女声",
+      "source": "引擎仓库示例；en 裁决嗓即落它"
+    },
+    {
+      "voice": "default（voxcpm）",
+      "gender": "随指令",
+      "basis": "voice creation 文本指令嗓",
+      "source": "性别由指令描述决定，无固定参考"
+    },
+    {
+      "voice": "sherpa 内置",
+      "gender": "均有",
+      "basis": "kokoro 英文女声系；matcha-zh 含 zf_* 女与 男声 zm_*×45",
+      "source": "-e sherpa -v zm_009 即刻可用中文男声"
+    },
+    {
+      "voice": "male 角色嗓（神经克隆）",
+      "gender": "仍空白——角色目录无男声资产；采一条男角色 ref 即四克隆引擎自动认领。男声现路：sherpa zm_* 与 system 开放集",
+      "basis": "",
+      "source": ""
+    }
+  ],
+  "engineProps": [
+    {
+      "engine": "gptsovits",
+      "latency": "1.60-2.75s 双 PASS（CPU）",
+      "form": "整句",
+      "ja": "✓ api_v2 语言码 ja（日英混合模式）",
+      "install": "ready · fresh 全链实证"
+    },
+    {
+      "engine": "voxcpm",
+      "latency": "3.49s MARGINAL；流式首包 0.21-0.54s",
+      "form": "流式 + 整句",
+      "ja": "✓ VoxCPM2 官方 30 语，文本自识无参数位",
+      "install": "ready · 4.6G 在位"
+    },
+    {
+      "engine": "indextts",
+      "latency": "3.9-5.7s FAIL",
+      "form": "整句 + duration_factor",
+      "ja": "✓ LANGUAGES 表 ja 一等",
+      "install": "ready"
+    },
+    {
+      "engine": "firered",
+      "latency": "4.45-5.50s FAIL",
+      "form": "整句；Instruct 指令面（语速/pitch/volume）一期未接线",
+      "ja": "✓ shim 映射 <|Japanese|> 白名单 tag",
+      "install": "ready · 39G 在位"
+    },
+    {
+      "engine": "zipvoice",
+      "latency": "v1 基线",
+      "form": "整句",
+      "ja": "✗ 维持 zh/en（回退链成员）",
+      "install": "在位"
+    },
+    {
+      "engine": "sherpa",
+      "latency": "最快（kokoro onnx）",
+      "form": "分块流水",
+      "ja": "✗ kokoro ja 嗓未接",
+      "install": "在位"
+    },
+    {
+      "engine": "system",
+      "latency": "基线（22 字约 2s）",
+      "form": "直调",
+      "ja": "系统嗓自带（Kyoko 等）",
+      "install": "OS 自带"
+    }
+  ],
+  "fixRecords": [
+    "① frieren-zh 音源找错人：原 20.8s B 站中配 raw 窗主说话人是村长（男声）——「我想请你解读这本书」是问芙莉莲的话。取窗内 11.62-14.86s 芙莉莲独句（3.24s）重采。",
+    "② voxcpm 长参考失稳（引擎约束，非资产缺陷）：>10s 参考致零样本克隆塌形——ref-en 14s → 男声（F0 108-113Hz vs 参考 185Hz，可复现），dva 28s → 无浊音；≤10s 全正常。角色资产三窗规整（ja 10.0 / en 8.4 / dva 9.0），修复后 F0 对拍 183Hz ✓。GPT-SoVITS 的 3-10s 硬限在 VoxCPM 上同样成立，早期调研只做指标复核未做人工听感，漏抓。",
+    "③ lucy 干净源：htdemucs_ft 4 模型集成重分离，取 5.0-12.3s 露西连续两句（7.3s）；官方 Lucy 特辑（日英混剪）与 Drive Like Hell（枪战短句）验证后弃用。",
+    "④ default 性别标注纠偏：gptsovits/indextts default = 官方示例男声（早期版本标\"中性\"无依据），firered default = 女声，voxcpm = 指令随性别；sherpa 有 45 个 zm_* 中文男声（\"男声仅 system 可达\"为误断）。",
+    "⑤ ja 进域接线：detectTextLang 假名优先三值化；firered shim <|Japanese|> 映射；locale/config 三元化，ja → gptsovits + frieren 内置预设；协议文档语种面更新；测试覆盖 121+ 用例（引擎四套件 115 + 渲染器 6 全绿）。"
+  ],
+  "openItems": [
+    "ja 已知边界：纯汉字无假名日文句（汉文训读体外罕见）按 zh 走；gptsovits ja default 是中文腔参考降级；zipvoice/sherpa 维持 zh/en。",
+    "male 角色嗓空白（克隆面）：采一条男角色（ref.wav + ref.txt + meta.json 进 ~/.local/share/say/voices/<角色>/，窗守 3-10s）即四引擎自动认领。男声现路：sherpa zm_* 与 system 开放集。",
+    "FireRed Instruct 控制面：en 默认引擎已上位而控制面（语速/pitch/volume）闲置，需要时经协议可选字段另立 effort。"
+  ]
+}
