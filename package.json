@@ -8,6 +8,7 @@
     "say": "./bin/say"
   },
   "scripts": {
+    "dev:playground": "PORT=$(npx -y @lionad/port-key playground); test -n \"$PORT\" || { echo \"port-key 取号失败\" >&2; exit 1; }; PORT=$PORT pnpm -C packages/playground dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

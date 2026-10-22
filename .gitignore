@@ -12,3 +12,7 @@ docs/research/voice-matrix/samples/
 
 # flow-dev worktree 隔离现场
 .claude/worktrees/
+
+# playground Nuxt 产物
+.nuxt/
+.output/

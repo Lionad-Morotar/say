@@ -1,0 +1,6 @@
+packages:
+  - packages/*
+
+# pnpm 12 构建审批：esbuild 是 Nuxt/Vite 链的必经二进制（字段已从 onlyBuiltDependencies 迁移）
+allowBuilds:
+  esbuild: true
