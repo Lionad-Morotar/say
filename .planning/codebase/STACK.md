@@ -20,8 +20,14 @@ macOS `say` 的神经网络级 TTS 替代：纯 Node/TS CLI，无构建步骤（
 
 **包管理器：**
 
-- pnpm（lockfile `pnpm-lock.yaml`，lockfileVersion 9.0；本机实测 pnpm 10.33.2）
+- pnpm workspace（lockfile `pnpm-lock.yaml`；本机实测 pnpm 12.9.1）
+- `pnpm-workspace.yaml`：`packages: [packages/*]` + `allowBuilds: { esbuild: true }`（映射形态，pnpm 12 的 onlyBuiltDependencies 白名单在此 pnpm 下无效）
 - `package.json` 未声明 `packageManager` 字段，无 `.nvmrc` / `.node-version`，Node 版本要求只记录在 README
+
+**子包 `packages/playground`（嗓音工作台）：**
+
+- Nuxt 4（`ssr: false`，Nitro server routes 自动导入——`defineEventHandler` 等不写 import，不独立装 h3）+ vitest（配 `@vitejs/plugin-vue`，`.vue` 组件测试用 happy-dom pragma）
+- devDependencies 隔离在子包内（nuxt、vue、vitest 族）；根不感知 Nuxt 依赖面
 
 ## 核心依赖及选型原因
 
@@ -44,8 +50,9 @@ macOS `say` 的神经网络级 TTS 替代：纯 Node/TS CLI，无构建步骤（
 ## 开发命令
 
 ```sh
-pnpm test        # vitest run（一次性跑完，非 watch）
-pnpm typecheck   # tsc --noEmit
+pnpm test            # 根 vitest run + pnpm -C packages/playground test（门禁串链）
+pnpm typecheck       # tsc --noEmit
+pnpm dev:playground  # port-key 取独立端口起 Nuxt dev server（host 127.0.0.1）
 ```
 
 **tsconfig.json 关键项**（与「Node 原生跑 .ts」强配套，新增代码必须遵守）：

@@ -1,0 +1,45 @@
+{
+  "date": "261022",
+  "sessions": [
+    {
+      "id": "v-mvjc8gi7-07ca41",
+      "createdAt": "2026-10-22T09:27:49.904Z",
+      "prompt": "这句用来盲听对比，两边引擎谁更自然？",
+      "sources": {
+        "a": {
+          "engine": "sherpa",
+          "voice": "af_maple",
+          "audio": "audio/live-v-mvjc8gi7-07ca41-a.wav"
+        },
+        "b": {
+          "engine": "system",
+          "voice": "default",
+          "audio": "audio/live-v-mvjc8gi7-07ca41-b.wav"
+        }
+      },
+      "order": "ba",
+      "choice": "a",
+      "note": ""
+    },
+    {
+      "id": "v-mvjd578k-4f70af",
+      "createdAt": "2026-10-22T09:53:17.541Z",
+      "prompt": "这句用来盲听对比，两边引擎谁更自然？",
+      "sources": {
+        "a": {
+          "engine": "sherpa",
+          "voice": "af_maple",
+          "audio": "audio/live-v-mvjd578k-4f70af-a.wav"
+        },
+        "b": {
+          "engine": "system",
+          "voice": "default",
+          "audio": "audio/live-v-mvjd578k-4f70af-b.wav"
+        }
+      },
+      "order": "ab",
+      "choice": "a",
+      "note": ""
+    }
+  ]
+}
