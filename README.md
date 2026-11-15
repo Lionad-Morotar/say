@@ -1,3 +1,8 @@
+> [!WARNING]
+> **此仓库已归档，不再维护。**
+> 作者的语音合成已改用 DeepSeek 官方 TTS API（`POST /v1/tools/tts`，流式 WebSocket 亦开放，双音色 `stella`/`tide`，限时 ¥1.5/万字符），本地神经嗓的维护精力就此撤回。
+> 本仓库保留为历史参考：多引擎接入面（sherpa / zipvoice / indextts / firered / gptsovits / voxcpm）与试听裁决方法仍可复用，但不再接受修复与功能请求。macOS 原生 `say` 仍是零依赖兜底。
+
 # say
 
 macOS `say` 的神经网络级替代：同名 CLI，PATH shadow 接管 `say` 调用，默认本地离线推理，任何失败回退系统嗓，出声即 exit 0。为 agent 说话体验而建——调用面就是 `say <text>`，宿主侧零改动。
